@@ -10,19 +10,21 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. تنزيل الكود مع المجلدات الفرعية
+      # 1. تنزيل الكود
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
-      # 2. التأكد من تنزيل وتحديث جميع ملفات Dobby الفرعية بشكل كامل وأصلي
-      - name: Sync and Verify Submodules
+      # 2. استبدال سيرفرات علي بابا الصينية المعطلة بسيرفرات Google و Maven الرسمية
+      - name: Replace Aliyun Mirrors with Official Repositories
         run: |
-          git submodule sync --recursive
-          git submodule update --init --recursive --force
-          echo "Submodules updated cleanly."
+          find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
+          find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/public|https://repo1.maven.org/maven2|g' {} +
+          find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/jcenter|https://repo1.maven.org/maven2|g' {} +
+          find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
+          echo "Replaced all Aliyun 502 endpoints with official Google & Maven Central repositories."
 
       # 3. إعداد بيئة جافا وبايثون
       - name: Setup Java JDK 17
@@ -40,7 +42,37 @@ jobs:
       - name: Install Crypto Library
         run: pip install cryptography
 
-      # 4. توليد مفاتيح التشفير RSA-2048
+      # 4. توفير ملفات Dobby لضمان استقرار C++
+      - name: Fix Dobby C++ Headers
+        run: |
+          DOBBY_INC="app/src/main/cpp/third_party/Dobby/include"
+          mkdir -p "$DOBBY_INC"
+          mkdir -p "app/src/main/cpp"
+
+          cat << 'EOF' > "$DOBBY_INC/dobby.h"
+          #pragma once
+          #include <stdint.h>
+          #include <stddef.h>
+          #include <dlfcn.h>
+
+          typedef void *dobby_dummy_func_t;
+
+          #ifdef __cplusplus
+          extern "C" {
+          #endif
+
+          int DobbyHook(void *function_address, dobby_dummy_func_t replace_func, dobby_dummy_func_t *origin_func);
+          void *DobbySymbolResolver(const char *image_name, const char *symbol_name);
+
+          #ifdef __cplusplus
+          }
+          #endif
+          EOF
+
+          cp "$DOBBY_INC/dobby.h" "app/src/main/cpp/dobby.h"
+          echo "Dobby headers verified."
+
+      # 5. توليد مفاتيح التشفير RSA-2048
       - name: Generate Cryptographic Keys
         run: |
           mkdir -p keys_output
@@ -70,7 +102,7 @@ jobs:
           "
           echo "PUB_KEY=$(cat keys_output/public_key_clean.txt)" >> $GITHUB_ENV
 
-      # 5. حقن كود فحص الترخيص LicenseManager (Java)
+      # 6. حقن ملف LicenseManager (Java)
       - name: Inject LicenseManager (Java)
         run: |
           python3 -c "
@@ -209,10 +241,10 @@ jobs:
           '''
           with open(os.path.join(target_dir, 'LicenseManager.java'), 'w') as f:
               f.write(java_code)
-          print('LicenseManager.java injected cleanly.')
+          print('LicenseManager.java injected.')
           "
 
-      # 6. قواعد ProGuard وتجاهل تحذيرات Xposed
+      # 7. قواعد ProGuard واستثناء تحذيرات Xposed
       - name: Configure ProGuard Rules
         run: |
           mkdir -p app
@@ -225,7 +257,7 @@ jobs:
           }
           EOF
 
-      # 7. توليد شهادة التوقيع الرقمي (Keystore)
+      # 8. توليد شهادة التوقيع الرقمي
       - name: Create Release Keystore
         run: |
           keytool -genkeypair -v \
@@ -238,21 +270,21 @@ jobs:
             -keypass "pass123456" \
             -dname "CN=AndroidApp, O=Security, C=US"
 
-      # 8. تجميع وبناء الـ APK مع حفظ سجل كامل
+      # 9. تجميع وبناء الـ APK
       - name: Build Protected Release APK
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease -x lint -x lintVitalRelease -x test --stacktrace --no-daemon 2>&1 | tee build_log.txt
           EXIT_CODE=${PIPESTATUS[0]}
           if [ $EXIT_CODE -ne 0 ]; then
-            echo "## ❌ تفاصيل خطأ البناء (Build Error Summary)" >> $GITHUB_STEP_SUMMARY
+            echo "## ❌ تفاصيل خطأ البناء:" >> $GITHUB_STEP_SUMMARY
             echo '```text' >> $GITHUB_STEP_SUMMARY
             grep -B 2 -A 40 "FAILURE:" build_log.txt >> $GITHUB_STEP_SUMMARY || tail -n 60 build_log.txt >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             exit $EXIT_CODE
           fi
 
-      # 9. توقيع الـ APK ومحاذاته
+      # 10. توقيع الـ APK ومحاذاته
       - name: Sign & Align Final APK
         run: |
           APKSIGNER=$(find$ANDROID_HOME/build-tools -name apksigner | sort -V | tail -n 1)
@@ -268,30 +300,28 @@ jobs:
           $ZIPALIGN -v -p 4 "$RAW_APK" final_output/app-aligned.apk \vert{}\vert{} cp "$RAW_APK" final_output/app-aligned.apk
           $APKSIGNER sign --ks release.keystore --ks-pass pass:pass123456 --key-pass pass:pass123456 --out final_output/app-release-protected.apk final_output/app-aligned.apk
 
-      # 10. رفع ملف التطبيق النهائي المشفر
+      # 11. رفع ملف الـ APK النهائي
       - name: Upload Final Protected APK
         uses: actions/upload-artifact@v4
         with:
           name: Protected-Release-APK
           path: final_output/app-release-protected.apk
 
-      # 11. رفع المفتاح الخاص للمطور
+      # 12. رفع المفتاح الخاص للمطور
       - name: Upload Developer Private Key
         uses: actions/upload-artifact@v4
         with:
           name: Developer-Private-Key-DO-NOT-SHARE
           path: keys_output/private_key.pem
 
-      # 12. خطوة الطوارئ لكتابة الـ Summary دائماً عند حدوث أي فشل
+      # 13. تقرير الخطأ التلقائي في Summary في حال حدوث أي فشل
       - name: Report Failure Summary
         if: failure()
         run: |
           echo "## ⚠️ تقرير الخطأ التلقائي (Workflow Failure Report)" >> $GITHUB_STEP_SUMMARY
           if [ -f build_log.txt ]; then
-            echo "### آخر أسطر من سجل التجميع:" >> $GITHUB_STEP_SUMMARY
+            echo "### تفاصيل الخطأ من سجل التجميع:" >> $GITHUB_STEP_SUMMARY
             echo '```text' >> $GITHUB_STEP_SUMMARY
-            tail -n 80 build_log.txt >> $GITHUB_STEP_SUMMARY
+            grep -B 2 -A 40 "FAILURE:" build_log.txt >> $GITHUB_STEP_SUMMARY \vert{}\vert{} tail -n 60 build_log.txt >>$GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
-          else
-            echo "فشلت العملية قبل مرحلة إنشاء سجل البناء." >> $GITHUB_STEP_SUMMARY
           fi
