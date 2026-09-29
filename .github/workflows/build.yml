@@ -10,23 +10,32 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. تنزيل الكود
+      # 1. تنزيل الكود مع الفروع الفرعية
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
-      # 2. استبدال سيرفرات علي بابا الصينية المعطلة بسيرفرات Google و Maven الرسمية
+      # 2. استرجاع وتحديث مكتبة Dobby بملفاتها الأصلية الكاملة دون أي تعديل يدوي
+      - name: Restore Clean Official Dobby Submodule
+        run: |
+          git submodule sync --recursive
+          git submodule update --init --recursive --force
+          git submodule foreach --recursive git reset --hard
+          git submodule foreach --recursive git clean -fdx
+          echo "Dobby official source and headers restored cleanly."
+
+      # 3. استبدال سيرفرات علي بابا الصينية بمستودعات Google و Maven الرسمية
       - name: Replace Aliyun Mirrors with Official Repositories
         run: |
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/public|https://repo1.maven.org/maven2|g' {} +
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/jcenter|https://repo1.maven.org/maven2|g' {} +
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
-          echo "Replaced all Aliyun 502 endpoints with official Google & Maven Central repositories."
+          echo "Replaced all Aliyun mirrors with official Google & Maven Central repositories."
 
-      # 3. إعداد بيئة جافا وبايثون
+      # 4. إعداد بيئة جافا وبايثون
       - name: Setup Java JDK 17
         uses: actions/setup-java@v4
         with:
@@ -41,36 +50,6 @@ jobs:
 
       - name: Install Crypto Library
         run: pip install cryptography
-
-      # 4. توفير ملفات Dobby لضمان استقرار C++
-      - name: Fix Dobby C++ Headers
-        run: |
-          DOBBY_INC="app/src/main/cpp/third_party/Dobby/include"
-          mkdir -p "$DOBBY_INC"
-          mkdir -p "app/src/main/cpp"
-
-          cat << 'EOF' > "$DOBBY_INC/dobby.h"
-          #pragma once
-          #include <stdint.h>
-          #include <stddef.h>
-          #include <dlfcn.h>
-
-          typedef void *dobby_dummy_func_t;
-
-          #ifdef __cplusplus
-          extern "C" {
-          #endif
-
-          int DobbyHook(void *function_address, dobby_dummy_func_t replace_func, dobby_dummy_func_t *origin_func);
-          void *DobbySymbolResolver(const char *image_name, const char *symbol_name);
-
-          #ifdef __cplusplus
-          }
-          #endif
-          EOF
-
-          cp "$DOBBY_INC/dobby.h" "app/src/main/cpp/dobby.h"
-          echo "Dobby headers verified."
 
       # 5. توليد مفاتيح التشفير RSA-2048
       - name: Generate Cryptographic Keys
@@ -244,7 +223,7 @@ jobs:
           print('LicenseManager.java injected.')
           "
 
-      # 7. قواعد ProGuard واستثناء تحذيرات Xposed
+      # 7. قواعد ProGuard وتجاهل تحذيرات Xposed
       - name: Configure ProGuard Rules
         run: |
           mkdir -p app
@@ -257,7 +236,7 @@ jobs:
           }
           EOF
 
-      # 8. توليد شهادة التوقيع الرقمي
+      # 8. توليد شهادة التوقيع الرقمي (Keystore)
       - name: Create Release Keystore
         run: |
           keytool -genkeypair -v \
@@ -284,7 +263,7 @@ jobs:
             exit $EXIT_CODE
           fi
 
-      # 10. توقيع الـ APK ومحاذاته
+      # 10. توقيع ومحاذاة الـ APK النهائي
       - name: Sign & Align Final APK
         run: |
           APKSIGNER=$(find$ANDROID_HOME/build-tools -name apksigner | sort -V | tail -n 1)
@@ -314,7 +293,7 @@ jobs:
           name: Developer-Private-Key-DO-NOT-SHARE
           path: keys_output/private_key.pem
 
-      # 13. تقرير الخطأ التلقائي في Summary في حال حدوث أي فشل
+      # 13. كتابة تقرير الخطأ التلقائي دائماً في Summary عند حدوث أي فشل
       - name: Report Failure Summary
         if: failure()
         run: |
