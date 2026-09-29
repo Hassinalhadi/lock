@@ -1,38 +1,235 @@
-name: Build Android APK
+name: Full Automated Secure Build & Licensing
 
 on:
-  workflow_dispatch: # يتيح لك تشغيل البناء يدوياً بنقرة زر في أي وقت
+  workflow_dispatch: # تشغيل يدوي بنقرة زر في أي وقت
   push:
-    branches: [ main, master ] # يبدأ البناء تلقائياً عند رفع أي تعديل على هذه الفروع
+    branches: [ main, master ]
 
 jobs:
-  build:
+  build-and-protect:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. جلب ملفات الكود من المستودع
-      - name: Checkout Code
+      # 1. تنزيل الكود من المستودع
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      # 2. تثبيت بيئة جافا (JDK 17) المتوافقة مع أندرويد
-      - name: Set up JDK 17
+      # 2. إعداد بيئة جافا (JDK 17) وبايثون
+      - name: Setup Java JDK 17
         uses: actions/setup-java@v4
         with:
           distribution: 'temurin'
           java-version: '17'
           cache: 'gradle'
 
-      # 3. إعطاء صلاحية التشغيل لأداة بناء Gradle
-      - name: Grant Execute Permission
-        run: chmod +x gradlew
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
 
-      # 4. بناء وتجميع ملف APK
-      - name: Build with Gradle
-        run: ./gradlew assembleDebug --stacktrace
+      - name: Install Crypto Tools
+        run: pip install cryptography
 
-      # 5. رفع ملف الـ APK الناتج لتتمكن من تنزيله
-      - name: Upload APK
+      # 3. توليد زوج مفاتيح التشفير RSA-2048 وحفظها
+      - name: Generate Master Cryptographic Keys
+        run: |
+          mkdir -p keys_output
+          python -c "
+          from cryptography.hazmat.primitives.asymmetric import rsa
+          from cryptography.hazmat.primitives import serialization
+          import os
+
+          # توليد المفتاح الخاص
+          priv = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+          priv_pem = priv.private_bytes(
+              encoding=serialization.Encoding.PEM,
+              format=serialization.PrivateFormat.PKCS8,
+              encryption_algorithm=serialization.NoEncryption()
+          )
+          with open('keys_output/private_key.pem', 'wb') as f:
+              f.write(priv_pem)
+
+          # توليد المفتاح العام
+          pub = priv.public_key()
+          pub_pem = pub.public_bytes(
+              encoding=serialization.Encoding.PEM,
+              format=serialization.PublicFormat.SubjectPublicKeyInfo
+          )
+          with open('keys_output/public_key.pem', 'wb') as f:
+              f.write(pub_pem)
+
+          # استخراج نص Base64 النظيف للمفتاح العام
+          lines = [l for l in pub_pem.decode('utf-8').splitlines() if not l.startswith('-----')]
+          clean_pub = ''.join(lines)
+          with open('keys_output/public_key_clean.txt', 'w') as f:
+              f.write(clean_pub)
+          print('Generated clean public key.')
+          "
+          echo "PUB_KEY=$(cat keys_output/public_key_clean.txt)" >> $GITHUB_ENV
+
+      # 4. حقن كود التحقق من الترخيص داخل مجلدات المشروع
+      - name: Inject LicenseManager & Security Layer
+        run: |
+          # تحديد مجلد حزمة التطبيق تلقائياً
+          if [ -d "app/src/main/java/io/github/zensu357/camswap" ]; then
+            TARGET_DIR="app/src/main/java/io/github/zensu357/camswap"
+            PKG="io.github.zensu357.camswap"
+          else
+            TARGET_DIR=$(find app/src/main/java -maxdepth 5 -type d | tail -n 1)
+            PKG=$(echo "$TARGET_DIR" | sed 's|app/src/main/java/||' | tr '/' '.')
+          fi
+
+          echo "Target Package: $PKG"
+          echo "Target Directory: $TARGET_DIR"
+
+          cat << EOF > "$TARGET_DIR/LicenseManager.kt"
+          package $PKG
+
+          import android.content.Context
+          import android.os.Build
+          import android.provider.Settings
+          import android.util.Base64
+          import org.json.JSONObject
+          import java.security.KeyFactory
+          import java.security.MessageDigest
+          import java.security.PublicKey
+          import java.security.Signature
+          import java.security.spec.X509EncodedKeySpec
+          import java.text.SimpleDateFormat
+          import java.util.Date
+          import java.util.Locale
+          import java.util.TimeZone
+
+          object LicenseManager {
+              private const val PUBLIC_KEY_BASE64 = "${{ env.PUB_KEY }}"
+              private const val PREFS_NAME = "sys_lic_cache"
+              private const val KEY_TOKEN = "lic_data"
+
+              data class LicenseInfo(
+                  val isValid: Boolean,
+                  val owner: String = "",
+                  val hwid: String = "",
+                  val expiresAt: String = "",
+                  val tier: String = "",
+                  val errorMessage: String? = null
+              )
+
+              fun getDeviceHWID(context: Context): String {
+                  return try {
+                      val androidId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: ""
+                      val raw = androidId + Build.BOARD + Build.BRAND + Build.DEVICE + Build.HARDWARE + Build.MANUFACTURER + Build.MODEL
+                      val digest = MessageDigest.getInstance("SHA-256").digest(raw.toByteArray(Charsets.UTF_8))
+                      digest.joinToString("") { "%02X".format(it) }.take(16)
+                  } catch (e: Exception) {
+                      "UNKNOWN_DEVICE_ID"
+                  }
+              }
+
+              fun verifyLicense(context: Context, licenseKey: String): LicenseInfo {
+                  val parts = licenseKey.trim().split(".")
+                  if (parts.size != 2) return LicenseInfo(false, errorMessage = "تنسيق المفتاح غير صحيح")
+                  return try {
+                      val payloadBytes = Base64.decode(parts[0], Base64.DEFAULT)
+                      val sigBytes = Base64.decode(parts, Base64.DEFAULT)
+
+                      val keyBytes = Base64.decode(PUBLIC_KEY_BASE64, Base64.DEFAULT)
+                      val pubKey = KeyFactory.getInstance("RSA").generatePublic(X509EncodedKeySpec(keyBytes))
+                      val sig = Signature.getInstance("SHA256withRSA").apply {
+                          initVerify(pubKey)
+                          update(payloadBytes)
+                      }
+                      if (!sig.verify(sigBytes)) return LicenseInfo(false, errorMessage = "المفتاح مزور أو تم التعديل عليه")
+
+                      val json = JSONObject(String(payloadBytes, Charsets.UTF_8))
+                      val licHwid = json.optString("hwid", "")
+                      val owner = json.optString("owner", "User")
+                      val exp = json.optString("expires_at", "")
+                      val tier = json.optString("tier", "VIP")
+
+                      if (!licHwid.equals(getDeviceHWID(context), ignoreCase = true)) {
+                          return LicenseInfo(false, owner, licHwid, errorMessage = "المفتاح غير مخصص لهذا الجهاز")
+                      }
+
+                      if (!exp.equals("LIFETIME", ignoreCase = true)) {
+                          val sdf = SimpleDateFormat("yyyy-MM-dd", Locale.US).apply { timeZone = TimeZone.getTimeZone("UTC") }
+                          val expDate = sdf.parse(exp)
+                          if (expDate != null && Date().after(expDate)) {
+                              return LicenseInfo(false, owner, licHwid, exp, errorMessage = "انتهت صلاحية المفتاح")
+                          }
+                      }
+                      LicenseInfo(true, owner, licHwid, exp, tier)
+                  } catch (e: Exception) {
+                      LicenseInfo(false, errorMessage = e.localizedMessage)
+                  }
+              }
+          }
+          EOF
+
+      # 5. تطبيق قواعد تشويش وتعتيم الكود المتقدم (R8 Obfuscation)
+      - name: Apply Advanced R8/ProGuard Obfuscation Rules
+        run: |
+          cat << 'EOF' >> app/proguard-rules.pro
+
+          # قواعد الحماية والتعتيم التلقائية
+          -repackageclasses 'com.sec.internal'
+          -allowaccessmodification
+          -overloadaggressively
+          -dontusemixedcaseclassnames
+
+          # حذف سجلات الطباعة لمنع تحليل الكود
+          -assumenosideeffects class android.util.Log {
+              public static boolean isLoggable(java.lang.String, int);
+              public static int v(...);
+              public static int d(...);
+              public static int i(...);
+              public static int w(...);
+          }
+          EOF
+
+          # تفعيل التشويش في ملف build.gradle إذا كان معطلاً
+          sed -i 's/minifyEnabled false/minifyEnabled true/g' app/build.gradle || true
+
+      # 6. توليد شهادة التوقيع الرقمي (Keystore)
+      - name: Create Release Keystore
+        run: |
+          keytool -genkeypair -v \
+            -keystore release.keystore \
+            -alias app_release_key \
+            -keyalg RSA \
+            -keysize 2048 \
+            -validity 10000 \
+            -storepass "securepass123" \
+            -keypass "securepass123" \
+            -dname "CN=SecureApp, OU=Development, O=Security, L=Baghdad, S=Baghdad, C=IQ"
+
+      # 7. بناء التطبيق وتجميع ملف الـ APK المشفر
+      - name: Build Protected Release APK
+        run: |
+          chmod +x gradlew
+          ./gradlew assembleRelease --stacktrace
+
+      # 8. توقيع الـ APK ومحاذاته ليصبح قابلاً للتثبيت مباشرة
+      - name: Sign & Align Final APK
+        run: |
+          APKSIGNER=$(find $ANDROID_HOME/build-tools -name apksigner | sort -V | tail -n 1)
+          ZIPALIGN=$(find $ANDROID_HOME/build-tools -name zipalign | sort -V | tail -n 1)
+          RAW_APK=$(find app/build/outputs/apk/release -name "*.apk" | head -n 1)
+
+          mkdir -p final_output
+          $ZIPALIGN -v -p 4 "$RAW_APK" final_output/app-aligned.apk || cp "$RAW_APK" final_output/app-aligned.apk
+          $APKSIGNER sign --ks release.keystore --ks-pass pass:securepass123 --key-pass pass:securepass123 --out final_output/app-release-protected.apk final_output/app-aligned.apk
+          echo "Signed protected APK created successfully."
+
+      # 9. رفع ملف الـ APK النهائي المشفر والموقع للتحميل
+      - name: Upload Final Protected APK
         uses: actions/upload-artifact@v4
         with:
-          name: app-debug-apk
-          path: app/build/outputs/apk/debug/*.apk
+          name: Protected-Release-APK
+          path: final_output/app-release-protected.apk
+
+      # 10. رفع المفتاح الخاص السري للمطور فقط (لاستخدامه في توليد التراخيص)
+      - name: Upload Developer Private Key (Keep Secret)
+        uses: actions/upload-artifact@v4
+        with:
+          name: Developer-Private-Key-DO-NOT-SHARE
+          path: keys_output/private_key.pem
