@@ -1,4 +1,4 @@
-name: Full Automated Secure Build & Licensing
+name: Full Automated Secure Build & Custom UI
 
 on:
   workflow_dispatch:
@@ -17,7 +17,7 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      # 2. إعداد بيئة جافا وبايثون أولاً وتثبيت المكتبات
+      # 2. إعداد بيئة جافا وبايثون
       - name: Setup Java JDK 17
         uses: actions/setup-java@v4
         with:
@@ -51,25 +51,24 @@ jobs:
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
           echo "Official repositories configured."
 
-      # 5. معالجة وتوليد أيقونة وشعار التطبيق RiyadhRiders بدون تكرار
+      # 5. معالجة وتوليد أيقونة وشعار التطبيق بدون تكرار
       - name: Process App Icon and Logo
         run: |
           cat << 'EOF' > process_icon.py
           import os, glob, shutil
           from PIL import Image
 
-          # 1. حذف جميع الأيقونات القديمة لتفادي خطأ Duplicate resources
+          # حذف أي أيقونات قديمة لتفادي أخطاء التكرار
           for old_icon in glob.glob('app/src/main/res/mipmap*/*launcher*'):
               try:
                   os.remove(old_icon)
               except Exception:
                   pass
 
-          # حذف مجلد أيقونات anydpi القديمة لضمان تطبيق الشعار الجديد على أندرويد الحديث
           if os.path.exists('app/src/main/res/mipmap-anydpi-v26'):
               shutil.rmtree('app/src/main/res/mipmap-anydpi-v26', ignore_errors=True)
 
-          # 2. البحث عن صورة الشعار المرفوعة
+          # البحث عن الشعار المرفوع
           candidates = ['8.jpg', 'icon.png', 'icon.jpg', 'logo.png', 'logo.jpg']
           found_img = None
           for c in candidates:
@@ -84,14 +83,12 @@ jobs:
                       break
 
           if found_img:
-              print(f"Processing app icon from: {found_img}")
+              print(f"Processing app logo & icons from: {found_img}")
               im = Image.open(found_img).convert('RGBA')
 
-              # حفظ الشعار بدقة عالية في drawable لاستخدامه داخل واجهة التفعيل
               os.makedirs('app/src/main/res/drawable', exist_ok=True)
               im.resize((512, 512), Image.Resampling.LANCZOS).save('app/src/main/res/drawable/app_logo.png')
 
-              # توليد مقاسات الأيقونات الرسمية بصيغة PNG حصراً
               densities = {
                   'mipmap-mdpi': 48,
                   'mipmap-hdpi': 72,
@@ -105,54 +102,175 @@ jobs:
                   resized = im.resize((size, size), Image.Resampling.LANCZOS)
                   resized.save(os.path.join(p, 'ic_launcher.png'))
                   resized.save(os.path.join(p, 'ic_launcher_round.png'))
-              print("Clean icons and logos generated successfully with zero duplicates.")
-          else:
-              print("Notice: No custom image found in root.")
+              print("App icons & drawables updated successfully.")
           EOF
           python3 process_icon.py
 
-      # 6. تغيير اسم التطبيق إلى RiyadhRiders وحزمة الـ Package Name إلى riyadh.rider.selfi
-      - name: Apply App Name and Package Name (riyadh.rider.selfi)
+      # 6. إزالة اللغة الصينية، إعداد العربية والإنجليزية، وتحديث حقوق المستخدم
+      - name: Remove Chinese, Add Arabic Translation, and Rebrand UI
         run: |
-          cat << 'EOF' > apply_naming.py
-          import os, re
+          cat << 'EOF' > rebrand_ui.py
+          import os, re, shutil, glob
+          import xml.etree.ElementTree as ET
 
-          # 1. تحديث applicationId في build.gradle
+          # 1. إزالة جميع مجلدات اللغة الصينية
+          for zh_dir in glob.glob('app/src/main/res/values-zh*'):
+              print(f"Removing Chinese resource folder: {zh_dir}")
+              shutil.rmtree(zh_dir, ignore_errors=True)
+
+          # 2. حصر اللغات على الإنجليزية والعربية في build.gradle
           if os.path.exists('app/build.gradle'):
               with open('app/build.gradle', 'r') as f:
                   bg = f.read()
               bg = re.sub(r"applicationId\s+['\"][^'\"]+['\"]", 'applicationId "riyadh.rider.selfi"', bg)
+              if 'resConfigs' not in bg:
+                  bg = re.sub(r'(defaultConfig\s*\{)', r'\1\n        resourceConfigurations += ["en", "ar"]', bg)
               with open('app/build.gradle', 'w') as f:
                   f.write(bg)
-              print("Application ID updated to riyadh.rider.selfi")
 
-          # 2. تحديث اسم التطبيق في AndroidManifest.xml
-          manifest_path = 'app/src/main/AndroidManifest.xml'
-          if os.path.exists(manifest_path):
-              with open(manifest_path, 'r') as f:
-                  mf = f.read()
-              mf = re.sub(r'android:label="[^"]*"', 'android:label="RiyadhRiders"', mf)
-              with open(manifest_path, 'w') as f:
-                  f.write(mf)
-              print("App Label updated to RiyadhRiders in AndroidManifest.xml")
-
-          # 3. تحديث اسم التطبيق في strings.xml
-          for root, dirs, files in os.walk('app/src/main/res'):
-              if 'strings.xml' in files:
-                  sp = os.path.join(root, 'strings.xml')
-                  with open(sp, 'r') as f:
+          # 3. تحديث ملفات strings.xml الإنجليزية وحذف روابط المطور القديم
+          for val_dir in ['app/src/main/res/values', 'app/src/main/res/values-en']:
+              s_path = os.path.join(val_dir, 'strings.xml')
+              if os.path.exists(s_path):
+                  with open(s_path, 'r', encoding='utf-8') as f:
                       st = f.read()
-                  st = re.sub(r'<string name="app_name">.*?</string>', '<string name="app_name">RiyadhRiders</string>', st)
-                  with open(sp, 'w') as f:
+                  st = re.sub(r'CamSwap', 'RiyadhRiders', st)
+                  st = re.sub(r'View &amp; report issues on GitHub', 'WhatsApp Support: +966505812141', st)
+                  st = re.sub(r'View & report issues on GitHub', 'WhatsApp Support: +966505812141', st)
+                  st = re.sub(r'Join Telegram Channel', 'Telegram: @zeko_1x', st)
+                  st = re.sub(r'Click to check on GitHub', 'RiyadhRiders Official', st)
+                  st = re.sub(r'zensu357', 'zeko_1x', st)
+                  st = re.sub(r'alberta davis', 'RiyadhRiders', st)
+                  with open(s_path, 'w', encoding='utf-8') as f:
                       f.write(st)
 
-          # 4. تحديث scope.list الخاص بـ Xposed
-          scope_path = 'app/src/main/resources/META-INF/xposed/scope.list'
-          if os.path.exists(scope_path):
-              with open(scope_path, 'w') as f:
+          # 4. إنشاء ملف الترجمة العربية الكامل values-ar/strings.xml
+          ar_dir = 'app/src/main/res/values-ar'
+          os.makedirs(ar_dir, exist_ok=True)
+          ar_strings = '''<?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">RiyadhRiders</string>
+              <string name="module_not_active">الموديول غير مفعل</string>
+              <string name="module_not_active_desc">يرجى تفعيل الموديول في تطبيق LSPosed وإعادة تشغيل الهاتف</string>
+              <string name="current_version">الإصدار الحالي</string>
+              <string name="latest_version">النسخة المعتمدة</string>
+              <string name="check_github">نسخة رسمية ومفعلة</string>
+              <string name="support">الدعم الفني والمعلومات</string>
+              <string name="github_issues">واتساب الدعم: +966505812141</string>
+              <string name="telegram_channel">قناة التليجرام: @zeko_1x</string>
+              <string name="home">الرئيسية</string>
+              <string name="manage">إدارة الوسائط</string>
+              <string name="settings">الإعدادات</string>
+          </resources>
+          '''
+          with open(os.path.join(ar_dir, 'strings.xml'), 'w', encoding='utf-8') as f:
+              f.write(ar_strings)
+          print("Arabic translation values-ar/strings.xml created.")
+
+          # 5. استبدال الروابط والنصوص في جميع ملفات Kotlin و Java
+          for root, dirs, files in os.walk('app/src/main/java'):
+              for file in files:
+                  if file.endswith(('.kt', '.java')):
+                      fp = os.path.join(root, file)
+                      with open(fp, 'r', encoding='utf-8', errors='ignore') as f:
+                          code = f.read()
+
+                      orig = code
+                      # استبدال الروابط دون المساس بأسماء الحزم (Packages)
+                      code = re.sub(r'https?://github\.com/zensu357/[^\s"'\''`)]+', 'https://api.whatsapp.com/send?phone=966505812141', code)
+                      code = re.sub(r'https?://github\.com/[a-zA-Z0-9_\-\./]+', 'https://api.whatsapp.com/send?phone=966505812141', code)
+                      code = re.sub(r'https?://t\.me/[a-zA-Z0-9_\-]+', 'https://t.me/zeko_1x', code)
+
+                      code = code.replace('"CamSwap"', '"RiyadhRiders"')
+                      code = code.replace('View & report issues on GitHub', 'WhatsApp: +966505812141')
+                      code = code.replace('Join Telegram Channel', 'Telegram: @zeko_1x')
+                      code = code.replace('Click to check on GitHub', 'RiyadhRiders Official')
+                      code = code.replace('"alberta davis"', '"RiyadhRiders"')
+
+                      if code != orig:
+                          with open(fp, 'w', encoding='utf-8') as f:
+                              f.write(code)
+                          print(f"Rebranded file: {file}")
+
+          # 6. حقن الشعار وبطاقة المطور في شاشة HomeScreen.kt
+          for root, dirs, files in os.walk('app/src/main/java'):
+              for file in files:
+                  if 'home' in file.lower() and file.endswith('.kt'):
+                      hp = os.path.join(root, file)
+                      with open(hp, 'r', encoding='utf-8') as f:
+                          h_code = f.read()
+
+                      if 'app_logo' not in h_code:
+                          # إضافة الاستيرادات اللازمة
+                          needed_imports = [
+                              "import androidx.compose.foundation.Image",
+                              "import androidx.compose.foundation.layout.Row",
+                              "import androidx.compose.foundation.layout.size",
+                              "import androidx.compose.foundation.layout.fillMaxWidth",
+                              "import androidx.compose.ui.Alignment",
+                              "import androidx.compose.ui.res.painterResource",
+                              "import androidx.compose.material3.CardDefaults",
+                              "import androidx.compose.material3.MaterialTheme",
+                              "import io.github.zensu357.camswap.R"
+                          ]
+                          for imp in needed_imports:
+                              if imp not in h_code:
+                                  h_code = re.sub(r'(package [^\n]+)', r'\1\n' + imp, h_code, count=1)
+
+                          logo_header_code = '''
+                              Card(
+                                  modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
+                                  colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
+                              ) {
+                                  Row(
+                                      modifier = Modifier.padding(16.dp),
+                                      verticalAlignment = Alignment.CenterVertically
+                                  ) {
+                                      Image(
+                                          painter = painterResource(id = R.drawable.app_logo),
+                                          contentDescription = "RiyadhRiders Logo",
+                                          modifier = Modifier.size(52.dp).padding(end = 12.dp)
+                                      )
+                                      Column {
+                                          Text(
+                                              text = "RiyadhRiders PRO",
+                                              style = MaterialTheme.typography.titleMedium
+                                          )
+                                          Text(
+                                              text = "المطور: @zeko_1x | واتساب: 966505812141+",
+                                              style = MaterialTheme.typography.bodySmall,
+                                              color = MaterialTheme.colorScheme.primary
+                                          )
+                                      }
+                                  }
+                              }
+                          '''
+                          # حقن بطاقة الشعار في بداية العمود
+                          if 'Column(' in h_code:
+                              h_code = re.sub(r'(Column\([^)]*\)\s*\{)', r'\1\n' + logo_header_code, h_code, count=1)
+                          elif 'Column {' in h_code:
+                              h_code = h_code.replace('Column {', 'Column {\n' + logo_header_code, 1)
+
+                          with open(hp, 'w', encoding='utf-8') as f:
+                              f.write(h_code)
+                          print(f"Logo and developer header injected into {file}")
+
+          # 7. تحديث AndroidManifest.xml
+          m_path = 'app/src/main/AndroidManifest.xml'
+          if os.path.exists(m_path):
+              with open(m_path, 'r', encoding='utf-8') as f:
+                  mf = f.read()
+              mf = re.sub(r'android:label="[^"]*"', 'android:label="RiyadhRiders"', mf)
+              with open(m_path, 'w', encoding='utf-8') as f:
+                  f.write(mf)
+
+          # 8. تحديث ملف scope.list
+          sc_path = 'app/src/main/resources/META-INF/xposed/scope.list'
+          if os.path.exists(sc_path):
+              with open(sc_path, 'w', encoding='utf-8') as f:
                   f.write('riyadh.rider.selfi\n')
           EOF
-          python3 apply_naming.py
+          python3 rebrand_ui.py
 
       # 7. توليد مفاتيح التشفير RSA-2048
       - name: Generate Cryptographic Keys
@@ -185,7 +303,7 @@ jobs:
           python3 gen_keys.py
           echo "PUB_KEY=$(cat keys_output/public_key_clean.txt)" >> $GITHUB_ENV
 
-      # 8. حقن نظام الترخيص وشاشة التفعيل مع زر واتساب وشعار التطبيق
+      # 8. حقن نظام الحماية وشاشة التفعيل مع زر واتساب وتليجرام والشعار
       - name: Inject LicenseManager & RiyadhRiders Activation UI
         run: |
           cat << 'EOF' > inject_ui.py
@@ -406,7 +524,7 @@ jobs:
           with open(os.path.join(target_dir, 'LicenseManager.java'), 'w') as f:
               f.write(license_manager_code)
 
-          # 2. كود ActivationActivity.java مع الشعار وزر الواتساب
+          # 2. كود ActivationActivity.java
           activation_activity_code = f'''package {pkg};
 
           import android.app.Activity;
@@ -463,7 +581,7 @@ jobs:
                   logoView.setLayoutParams(logoParams);
                   layout.addView(logoView);
 
-                  // العنوان
+                  // العناوين
                   TextView titleText = new TextView(this);
                   titleText.setText("RiyadhRiders PRO");
                   titleText.setTextSize(24);
@@ -472,7 +590,7 @@ jobs:
                   layout.addView(titleText);
 
                   TextView subTitleText = new TextView(this);
-                  subTitleText.setText("نظام التفعيل والحماية المشفرة");
+                  subTitleText.setText("تفعيل النسخة الرسمية والمشفرة");
                   subTitleText.setTextSize(13);
                   subTitleText.setTextColor(Color.parseColor("#888888"));
                   subTitleText.setGravity(Gravity.CENTER);
@@ -513,14 +631,14 @@ jobs:
 
                   // زر شراء مفتاح عبر واتساب
                   TextView contactLabel = new TextView(this);
-                  contactLabel.setText("لشراء مفتاح ترخيص، تواصل معنا مباشرة:");
+                  contactLabel.setText("لطلب مفتاح الترخيص تواصل مع المطور:");
                   contactLabel.setTextSize(13);
                   contactLabel.setTextColor(Color.parseColor("#AAAAAA"));
-                  contactLabel.setPadding(0, 32, 0, 10);
+                  contactLabel.setPadding(0, 28, 0, 10);
                   layout.addView(contactLabel);
 
                   Button whatsappBtn = new Button(this);
-                  whatsappBtn.setText("💬 شراء مفتاح عبر واتساب (WhatsApp)");
+                  whatsappBtn.setText("💬 تواصل عبر واتساب (+966505812141)");
                   whatsappBtn.setBackgroundColor(Color.parseColor("#25D366"));
                   whatsappBtn.setTextColor(Color.WHITE);
                   whatsappBtn.setOnClickListener(new View.OnClickListener() {{
@@ -528,7 +646,7 @@ jobs:
                       public void onClick(View v) {{
                           try {{
                               String phone = "966505812141";
-                              String message = "Hello, I want to purchase a license key for RiyadhRiders." + nl + "My Device HWID: " + hwid;
+                              String message = "السلام عليكم، أود شراء ترخيص تطبيق RiyadhRiders." + nl + "معرف جهازي: " + hwid;
                               String encodedMsg = URLEncoder.encode(message, "UTF-8");
                               String waUrl = "https://api.whatsapp.com/send?phone=" + phone + "&text=" + encodedMsg;
                               Intent waIntent = new Intent(Intent.ACTION_VIEW);
@@ -541,12 +659,34 @@ jobs:
                   }});
                   layout.addView(whatsappBtn);
 
+                  // زر تليجرام
+                  Button telegramBtn = new Button(this);
+                  telegramBtn.setText("✈️ تواصل عبر تليجرام (@zeko_1x)");
+                  telegramBtn.setBackgroundColor(Color.parseColor("#0088CC"));
+                  telegramBtn.setTextColor(Color.WHITE);
+                  LinearLayout.LayoutParams tgParams = new LinearLayout.LayoutParams(
+                          LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                  tgParams.topMargin = 16;
+                  telegramBtn.setLayoutParams(tgParams);
+                  telegramBtn.setOnClickListener(new View.OnClickListener() {{
+                      @Override
+                      public void onClick(View v) {{
+                          try {{
+                              Intent tgIntent = new Intent(Intent.ACTION_VIEW, Uri.parse("https://t.me/zeko_1x"));
+                              startActivity(tgIntent);
+                          }} catch (Exception e) {{
+                              Toast.makeText(ActivationActivity.this, "تعذر فتح تليجرام", Toast.LENGTH_SHORT).show();
+                          }}
+                      }}
+                  }});
+                  layout.addView(telegramBtn);
+
                   // حقل إدخال المفتاح
                   TextView keyLabel = new TextView(this);
-                  keyLabel.setText("أدخل مفتاح الترخيص هنا:");
+                  keyLabel.setText("أدخل مفتاح الترخيص:");
                   keyLabel.setTextSize(13);
                   keyLabel.setTextColor(Color.parseColor("#AAAAAA"));
-                  keyLabel.setPadding(0, 32, 0, 10);
+                  keyLabel.setPadding(0, 28, 0, 10);
                   layout.addView(keyLabel);
 
                   final EditText keyInput = new EditText(this);
@@ -707,7 +847,7 @@ jobs:
           -keep class io.github.zensu357.camswap.LicenseManager { *; }
           EOF
 
-      # 10. توليد شهادة التوقيع وإعداد Gradle ليوقع تلقائياً
+      # 10. إعداد شهادة التوقيع الرسمية
       - name: Configure Automatic Release Signing in Gradle
         run: |
           mkdir -p app
@@ -744,7 +884,7 @@ jobs:
           EOF
           python3 setup_signing.py
 
-      # 11. تجميع وبناء الـ APK باسم وحزمة RiyadhRiders
+      # 11. تجميع وبناء الـ APK
       - name: Build Protected Release APK
         run: |
           chmod +x gradlew
@@ -758,21 +898,21 @@ jobs:
             exit $EXIT_CODE
           fi
 
-      # 12. رفع ملفات الـ APK الموقعة باسم RiyadhRiders
+      # 12. رفع ملفات الـ APK النهائية
       - name: Upload Final Protected APK
         uses: actions/upload-artifact@v4
         with:
           name: RiyadhRiders-Release-APK
           path: app/build/outputs/apk/release/*.apk
 
-      # 13. رفع المفتاح الخاص للمطور
+      # 13. رفع المفتاح الخاص للمطور لتوليد التراخيص
       - name: Upload Developer Private Key
         uses: actions/upload-artifact@v4
         with:
           name: Developer-Private-Key-DO-NOT-SHARE
           path: keys_output/private_key.pem
 
-      # 14. تقرير الخطأ التلقائي دائماً في Summary
+      # 14. تقرير الخطأ التلقائي
       - name: Report Failure Summary
         if: failure()
         run: |
