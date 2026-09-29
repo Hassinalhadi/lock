@@ -81,7 +81,7 @@ jobs:
           "
           echo "PUB_KEY=$(cat keys_output/public_key_clean.txt)" >> $GITHUB_ENV
 
-      # 6. حقن محرك التراخيص وشاشة التفعيل وقفل الـ Hook
+      # 6. حقن ملف LicenseManager وشاشة التفعيل المصححة وقفل الـ Hook
       - name: Inject Dual-Layer Licensing & Activation Screen
         run: |
           python3 -c "
@@ -103,7 +103,7 @@ jobs:
           if os.path.exists(old_kt):
               os.remove(old_kt)
 
-          # 1. كود LicenseManager.java الشامل
+          # 1. كود LicenseManager.java
           license_manager_code = f'''package {pkg};
 
           import android.content.Context;
@@ -299,7 +299,7 @@ jobs:
           with open(os.path.join(target_dir, 'LicenseManager.java'), 'w') as f:
               f.write(license_manager_code)
 
-          # 2. إنشاء شاشة التفعيل الرسمية ActivationActivity.java
+          # 2. كود ActivationActivity.java المصحح تماماً بدون أخطاء السطور
           activation_activity_code = f'''package {pkg};
 
           import android.app.Activity;
@@ -322,6 +322,8 @@ jobs:
               protected void onCreate(Bundle savedInstanceState) {{
                   super.onCreate(savedInstanceState);
 
+                  final String nl = String.valueOf((char)10);
+
                   ScrollView scrollView = new ScrollView(this);
                   scrollView.setFillViewport(true);
                   scrollView.setBackgroundColor(Color.parseColor(\"#121212\"));
@@ -341,7 +343,7 @@ jobs:
 
                   final String hwid = LicenseManager.getDeviceHWID(this);
                   TextView hwidLabel = new TextView(this);
-                  hwidLabel.setText(\"معرّف جهازك الخاص (Hardware ID):\");
+                  hwidLabel.setText(\"معرف جهازك الخاص (Hardware ID):\");
                   hwidLabel.setTextSize(14);
                   hwidLabel.setTextColor(Color.parseColor(\"#AAAAAA\"));
                   layout.addView(hwidLabel);
@@ -354,7 +356,7 @@ jobs:
                   layout.addView(hwidValue);
 
                   Button copyBtn = new Button(this);
-                  copyBtn.setText(\"نسخ المعرّف (Copy HWID)\");
+                  copyBtn.setText(\"نسخ المعرف (Copy HWID)\");
                   copyBtn.setBackgroundColor(Color.parseColor(\"#1E88E5\"));
                   copyBtn.setTextColor(Color.WHITE);
                   copyBtn.setOnClickListener(new View.OnClickListener() {{
@@ -364,16 +366,17 @@ jobs:
                           ClipData clip = ClipData.newPlainText(\"HWID\", hwid);
                           if (clipboard != null) {{
                               clipboard.setPrimaryClip(clip);
-                              Toast.makeText(ActivationActivity.this, \"تم نسخ معرّف الجهاز إلى الحافظة!\", Toast.LENGTH_SHORT).show();
+                              Toast.makeText(ActivationActivity.this, \"تم نسخ معرف الجهاز إلى الحافظة!\", Toast.LENGTH_SHORT).show();
                           }}
                       }}
                   }});
                   layout.addView(copyBtn);
 
                   TextView keyLabel = new TextView(this);
-                  keyLabel.setText(\"\\nأدخل مفتاح الترخيص هنا:\");
+                  keyLabel.setText(\"أدخل مفتاح الترخيص هنا:\");
                   keyLabel.setTextSize(14);
                   keyLabel.setTextColor(Color.parseColor(\"#AAAAAA\"));
+                  keyLabel.setPadding(0, 40, 0, 10);
                   layout.addView(keyLabel);
 
                   final EditText keyInput = new EditText(this);
@@ -401,11 +404,11 @@ jobs:
                           LicenseManager.LicenseInfo result = LicenseManager.verifyAndSave(ActivationActivity.this, input);
                           if (result.isValid) {{
                               statusText.setTextColor(Color.parseColor(\"#00E676\"));
-                              statusText.setText(\"✓ تم التفعيل بنجاح!\\nالمالك: \" + result.owner + \"\\nالباقة: \" + result.tier + \"\\nالصلاحية: \" + result.expiresAt);
+                              statusText.setText(\"تم التفعيل بنجاح!\" + nl + \"المالك: \" + result.owner + nl + \"الباقة: \" + result.tier + nl + \"الصلاحية: \" + result.expiresAt);
                               Toast.makeText(ActivationActivity.this, \"تم تفعيل الترخيص بنجاح!\", Toast.LENGTH_LONG).show();
                           }} else {{
                               statusText.setTextColor(Color.parseColor(\"#FF5252\"));
-                              statusText.setText(\"✗ فشل التفعيل:\\n\" + result.errorMessage);
+                              statusText.setText(\"فشل التفعيل: \" + result.errorMessage);
                           }}
                       }}
                   }});
@@ -415,7 +418,7 @@ jobs:
                   LicenseManager.LicenseInfo current = LicenseManager.checkSavedLicense(this);
                   if (current.isValid) {{
                       statusText.setTextColor(Color.parseColor(\"#00E676\"));
-                      statusText.setText(\"✓ التطبيق مرخص ومفعل بالفعل\\nالمالك: \" + current.owner + \"\\nالباقة: \" + current.tier + \"\\nالصلاحية: \" + current.expiresAt);
+                      statusText.setText(\"التطبيق مرخص ومفعل بالفعل\" + nl + \"المالك: \" + current.owner + nl + \"الباقة: \" + current.tier + nl + \"الصلاحية: \" + current.expiresAt);
                   }}
 
                   scrollView.addView(layout);
@@ -426,7 +429,7 @@ jobs:
           with open(os.path.join(target_dir, 'ActivationActivity.java'), 'w') as f:
               f.write(activation_activity_code)
 
-          # 3. حقن شاشة التفعيل في AndroidManifest.xml لتظهر كأيقونة تشغيل
+          # 3. حقن Activity في AndroidManifest.xml
           manifest_path = 'app/src/main/AndroidManifest.xml'
           if os.path.exists(manifest_path):
               with open(manifest_path, 'r') as f:
@@ -448,7 +451,7 @@ jobs:
                       f.write(m_content)
                   print('ActivationActivity registered in AndroidManifest.xml')
 
-          # 4. قفل كود HookMain.java الداخلي لتعطيل الموديل ما لم يوجد ترخيص صالح
+          # 4. قفل HookMain.java
           hook_path = os.path.join(target_dir, 'HookMain.java')
           if os.path.exists(hook_path):
               with open(hook_path, 'r') as f:
@@ -460,7 +463,7 @@ jobs:
                   )
                   with open(hook_path, 'w') as f:
                       f.write(h_content)
-                  print('HookMain.java locked with LicenseManager enforcement.')
+                  print('HookMain.java locked.')
           "
 
       # 7. قواعد ProGuard وتجاهل تحذيرات Xposed
@@ -478,7 +481,7 @@ jobs:
           -keep class io.github.zensu357.camswap.LicenseManager { *; }
           EOF
 
-      # 8. توليد شهادة التوقيع وإعداد Gradle ليوقع التطبيق تلقائياً
+      # 8. توليد شهادة التوقيع وإعداد Gradle ليوقع تلقائياً
       - name: Configure Automatic Release Signing in Gradle
         run: |
           mkdir -p app
@@ -514,7 +517,7 @@ jobs:
               print('Gradle release signing configured.')
           "
 
-      # 9. بناء وتجميع الـ APK الموقع
+      # 9. بناء وتجميع الـ APK
       - name: Build Protected Release APK
         run: |
           chmod +x gradlew
@@ -528,7 +531,7 @@ jobs:
             exit $EXIT_CODE
           fi
 
-      # 10. رفع ملفات الـ APK الموقعة الجاهزة للتثبيت
+      # 10. رفع ملفات الـ APK الموقعة
       - name: Upload Final Protected APK
         uses: actions/upload-artifact@v4
         with:
@@ -542,7 +545,7 @@ jobs:
           name: Developer-Private-Key-DO-NOT-SHARE
           path: keys_output/private_key.pem
 
-      # 12. كتابة تقرير الخطأ التلقائي دائماً في Summary عند حدوث أي فشل
+      # 12. تقرير الخطأ التلقائي في Summary في حال حدوث أي فشل
       - name: Report Failure Summary
         if: failure()
         run: |
