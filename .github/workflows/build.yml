@@ -17,16 +17,16 @@ jobs:
           submodules: recursive
           fetch-depth: 0
 
-      # 2. استرجاع وتحديث مكتبة Dobby بملفاتها الأصلية الكاملة دون أي تعديل يدوي
+      # 2. استرجاع مكتبة Dobby الأصلية النظيفة
       - name: Restore Clean Official Dobby Submodule
         run: |
           git submodule sync --recursive
           git submodule update --init --recursive --force
           git submodule foreach --recursive git reset --hard
           git submodule foreach --recursive git clean -fdx
-          echo "Dobby official source and headers restored cleanly."
+          echo "Dobby official source restored cleanly."
 
-      # 3. استبدال سيرفرات علي بابا الصينية بمستودعات Google و Maven الرسمية
+      # 3. استبدال سيرفرات علي بابا بمستودعات Google و Maven الرسمية
       - name: Replace Aliyun Mirrors with Official Repositories
         run: |
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
@@ -81,7 +81,7 @@ jobs:
           "
           echo "PUB_KEY=$(cat keys_output/public_key_clean.txt)" >> $GITHUB_ENV
 
-      # 6. حقن ملف LicenseManager (Java)
+      # 6. حقن ملف LicenseManager (Java) المصحح بالكامل
       - name: Inject LicenseManager (Java)
         run: |
           python3 -c "
@@ -172,13 +172,17 @@ jobs:
                   if (licenseKey == null || licenseKey.trim().isEmpty()) {{
                       return new LicenseInfo(false, \"المفتاح فارغ\");
                   }}
-                  String[] parts = licenseKey.trim().split(\"\\\\.\");
-                  if (parts.length != 2) {{
+                  String cleanKey = licenseKey.trim();
+                  int dotIndex = cleanKey.indexOf('.');
+                  if (dotIndex <= 0 || dotIndex >= cleanKey.length() - 1) {{
                       return new LicenseInfo(false, \"تنسيق المفتاح غير صالح\");
                   }}
                   try {{
-                      byte[] payloadBytes = Base64.decode(parts[0], Base64.DEFAULT);
-                      byte[] sigBytes = Base64.decode(parts, Base64.DEFAULT);
+                      String payloadPart = cleanKey.substring(0, dotIndex).trim();
+                      String sigPart = cleanKey.substring(dotIndex + 1).trim();
+
+                      byte[] payloadBytes = Base64.decode(payloadPart, Base64.DEFAULT);
+                      byte[] sigBytes = Base64.decode(sigPart, Base64.DEFAULT);
 
                       byte[] keyBytes = Base64.decode(PUBLIC_KEY_BASE64, Base64.DEFAULT);
                       X509EncodedKeySpec keySpec = new X509EncodedKeySpec(keyBytes);
@@ -220,7 +224,7 @@ jobs:
           '''
           with open(os.path.join(target_dir, 'LicenseManager.java'), 'w') as f:
               f.write(java_code)
-          print('LicenseManager.java injected.')
+          print('LicenseManager.java injected cleanly without escape characters.')
           "
 
       # 7. قواعد ProGuard وتجاهل تحذيرات Xposed
@@ -263,28 +267,35 @@ jobs:
             exit $EXIT_CODE
           fi
 
-      # 10. توقيع ومحاذاة الـ APK النهائي
-      - name: Sign & Align Final APK
+      # 10. توقيع جميع نسخ الـ APK ومحاذاتها
+      - name: Sign & Align Final APKs
         run: |
           APKSIGNER=$(find$ANDROID_HOME/build-tools -name apksigner | sort -V | tail -n 1)
           ZIPALIGN=$(find$ANDROID_HOME/build-tools -name zipalign | sort -V | tail -n 1)
-          RAW_APK=$(find app/build/outputs/apk -name "*.apk" | head -n 1)
-
-          if [ -z "$RAW_APK" ]; then
-            echo "Error: No APK was generated!"
-            exit 1
-          fi
 
           mkdir -p final_output
-          $ZIPALIGN -v -p 4 "$RAW_APK" final_output/app-aligned.apk \vert{}\vert{} cp "$RAW_APK" final_output/app-aligned.apk
-          $APKSIGNER sign --ks release.keystore --ks-pass pass:pass123456 --key-pass pass:pass123456 --out final_output/app-release-protected.apk final_output/app-aligned.apk
+          count=0
+          for apk in $(find app/build/outputs/apk -name "*.apk"); do
+            base=$(basename "$apk" .apk)
+            echo "Processing APK: $apk"
+            $ZIPALIGN -v -p 4 "$apk" "final_output/${base}-aligned.apk" || cp "$apk" "final_output/${base}-aligned.apk"
+            $APKSIGNER sign --ks release.keystore --ks-pass pass:pass123456 --key-pass pass:pass123456 --out "final_output/${base}-signed.apk" "final_output/${base}-aligned.apk"
+            rm -f "final_output/${base}-aligned.apk"
+            count=$((count+1))
+          done
 
-      # 11. رفع ملف الـ APK النهائي
+          if [ $count -eq 0 ]; then
+            echo "Error: No APK files found to sign!"
+            exit 1
+          fi
+          echo "Successfully signed $count APK files."
+
+      # 11. رفع ملفات الـ APK النهائية الموقعة
       - name: Upload Final Protected APK
         uses: actions/upload-artifact@v4
         with:
           name: Protected-Release-APK
-          path: final_output/app-release-protected.apk
+          path: final_output/*-signed.apk
 
       # 12. رفع المفتاح الخاص للمطور
       - name: Upload Developer Private Key
@@ -293,7 +304,7 @@ jobs:
           name: Developer-Private-Key-DO-NOT-SHARE
           path: keys_output/private_key.pem
 
-      # 13. كتابة تقرير الخطأ التلقائي دائماً في Summary عند حدوث أي فشل
+      # 13. كتابة تقرير الخطأ التلقائي دائماً في Summary عند حدوث أي تعثر
       - name: Report Failure Summary
         if: failure()
         run: |
