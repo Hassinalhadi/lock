@@ -10,14 +10,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. تنزيل الكود
+      # 1. تنزيل الكود مع الفروع الفرعية
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
-      # 2. استرجاع مكتبة Dobby الأصلية
+      # 2. استرجاع مكتبة Dobby الأصلية النظيفة
       - name: Restore Clean Official Dobby Submodule
         run: |
           git submodule sync --recursive
@@ -81,8 +81,8 @@ jobs:
           "
           echo "PUB_KEY=$(cat keys_output/public_key_clean.txt)" >> $GITHUB_ENV
 
-      # 6. حقن ملف LicenseManager وشاشة التفعيل المصححة وقفل الـ Hook
-      - name: Inject Dual-Layer Licensing & Activation Screen
+      # 6. حقن ملفات الترخيص وشاشة التفعيل واعتراض تشغيل MainActivity
+      - name: Inject Dual-Layer Licensing & Screen Lock
         run: |
           python3 -c "
           import os
@@ -299,13 +299,14 @@ jobs:
           with open(os.path.join(target_dir, 'LicenseManager.java'), 'w') as f:
               f.write(license_manager_code)
 
-          # 2. كود ActivationActivity.java المصحح تماماً بدون أخطاء السطور
+          # 2. كود ActivationActivity.java مع زر الانتقال للتطبيق بعد التفعيل
           activation_activity_code = f'''package {pkg};
 
           import android.app.Activity;
           import android.content.ClipData;
           import android.content.ClipboardManager;
           import android.content.Context;
+          import android.content.Intent;
           import android.graphics.Color;
           import android.os.Bundle;
           import android.view.Gravity;
@@ -328,7 +329,7 @@ jobs:
                   scrollView.setFillViewport(true);
                   scrollView.setBackgroundColor(Color.parseColor(\"#121212\"));
 
-                  LinearLayout layout = new LinearLayout(this);
+                  final LinearLayout layout = new LinearLayout(this);
                   layout.setOrientation(LinearLayout.VERTICAL);
                   layout.setPadding(48, 80, 48, 80);
                   layout.setGravity(Gravity.CENTER_HORIZONTAL);
@@ -395,7 +396,26 @@ jobs:
                   final TextView statusText = new TextView(this);
                   statusText.setTextSize(15);
                   statusText.setGravity(Gravity.CENTER);
-                  statusText.setPadding(0, 30, 0, 0);
+                  statusText.setPadding(0, 30, 0, 20);
+
+                  final Button openAppBtn = new Button(this);
+                  openAppBtn.setText(\"الدخول إلى التطبيق (Open CamSwap)\");
+                  openAppBtn.setBackgroundColor(Color.parseColor(\"#7B1FA2\"));
+                  openAppBtn.setTextColor(Color.WHITE);
+                  openAppBtn.setVisibility(View.GONE);
+                  openAppBtn.setOnClickListener(new View.OnClickListener() {{
+                      @Override
+                      public void onClick(View v) {{
+                          try {{
+                              Class<?> mainClass = Class.forName(getPackageName() + \".MainActivity\");
+                              Intent mainIntent = new Intent(ActivationActivity.this, mainClass);
+                              startActivity(mainIntent);
+                              finish();
+                          }} catch (Exception e) {{
+                              finish();
+                          }}
+                      }}
+                  }});
 
                   activateBtn.setOnClickListener(new View.OnClickListener() {{
                       @Override
@@ -406,19 +426,24 @@ jobs:
                               statusText.setTextColor(Color.parseColor(\"#00E676\"));
                               statusText.setText(\"تم التفعيل بنجاح!\" + nl + \"المالك: \" + result.owner + nl + \"الباقة: \" + result.tier + nl + \"الصلاحية: \" + result.expiresAt);
                               Toast.makeText(ActivationActivity.this, \"تم تفعيل الترخيص بنجاح!\", Toast.LENGTH_LONG).show();
+                              openAppBtn.setVisibility(View.VISIBLE);
                           }} else {{
                               statusText.setTextColor(Color.parseColor(\"#FF5252\"));
                               statusText.setText(\"فشل التفعيل: \" + result.errorMessage);
+                              openAppBtn.setVisibility(View.GONE);
                           }}
                       }}
                   }});
+
                   layout.addView(activateBtn);
                   layout.addView(statusText);
+                  layout.addView(openAppBtn);
 
                   LicenseManager.LicenseInfo current = LicenseManager.checkSavedLicense(this);
                   if (current.isValid) {{
                       statusText.setTextColor(Color.parseColor(\"#00E676\"));
                       statusText.setText(\"التطبيق مرخص ومفعل بالفعل\" + nl + \"المالك: \" + current.owner + nl + \"الباقة: \" + current.tier + nl + \"الصلاحية: \" + current.expiresAt);
+                      openAppBtn.setVisibility(View.VISIBLE);
                   }}
 
                   scrollView.addView(layout);
@@ -429,7 +454,46 @@ jobs:
           with open(os.path.join(target_dir, 'ActivationActivity.java'), 'w') as f:
               f.write(activation_activity_code)
 
-          # 3. حقن Activity في AndroidManifest.xml
+          # 3. اعتراض تشغيل MainActivity فوراً وتحويل المستخدم غير المرخص إلى شاشة التفعيل
+          main_kt = os.path.join(target_dir, 'MainActivity.kt')
+          if os.path.exists(main_kt):
+              with open(main_kt, 'r') as f:
+                  m_code = f.read()
+              if 'ActivationActivity' not in m_code:
+                  lock_code = '''
+                  val licInfo = LicenseManager.checkSavedLicense(this)
+                  if (!licInfo.isValid) {
+                      val intent = android.content.Intent(this, ActivationActivity::class.java)
+                      startActivity(intent)
+                      finish()
+                      return
+                  }
+                  '''
+                  m_code = m_code.replace('super.onCreate(savedInstanceState)', 'super.onCreate(savedInstanceState)\n' + lock_code)
+                  with open(main_kt, 'w') as f:
+                      f.write(m_code)
+                  print('MainActivity.kt intercepted with License Screen Lock.')
+
+          main_java = os.path.join(target_dir, 'MainActivity.java')
+          if os.path.exists(main_java):
+              with open(main_java, 'r') as f:
+                  mj_code = f.read()
+              if 'ActivationActivity' not in mj_code:
+                  lock_j = '''
+                  LicenseManager.LicenseInfo licInfo = LicenseManager.checkSavedLicense(this);
+                  if (!licInfo.isValid) {
+                      android.content.Intent intent = new android.content.Intent(this, ActivationActivity.class);
+                      startActivity(intent);
+                      finish();
+                      return;
+                  }
+                  '''
+                  mj_code = mj_code.replace('super.onCreate(savedInstanceState);', 'super.onCreate(savedInstanceState);\n' + lock_j)
+                  with open(main_java, 'w') as f:
+                      f.write(mj_code)
+                  print('MainActivity.java intercepted with License Screen Lock.')
+
+          # 4. تسجيل ActivationActivity في AndroidManifest.xml
           manifest_path = 'app/src/main/AndroidManifest.xml'
           if os.path.exists(manifest_path):
               with open(manifest_path, 'r') as f:
@@ -439,19 +503,14 @@ jobs:
                   <activity
                       android:name=\"{pkg}.ActivationActivity\"
                       android:exported=\"true\"
-                      android:label=\"CamSwap PRO License\">
-                      <intent-filter>
-                          <action android:name=\"android.intent.action.MAIN\" />
-                          <category android:name=\"android.intent.category.LAUNCHER\" />
-                      </intent-filter>
-                  </activity>
+                      android:label=\"CamSwap PRO License\" />
                   '''
                   m_content = m_content.replace('</application>', act_decl + '\n    </application>')
                   with open(manifest_path, 'w') as f:
                       f.write(m_content)
                   print('ActivationActivity registered in AndroidManifest.xml')
 
-          # 4. قفل HookMain.java
+          # 5. قفل محرك HookMain.java الداخلي
           hook_path = os.path.join(target_dir, 'HookMain.java')
           if os.path.exists(hook_path):
               with open(hook_path, 'r') as f:
@@ -459,11 +518,11 @@ jobs:
               if 'isSystemLicensed' not in h_content:
                   h_content = h_content.replace(
                       'if (lpparam.packageName.equals(MODULE_PACKAGE)) {\n            return;\n        }',
-                      'if (lpparam.packageName.equals(MODULE_PACKAGE)) {\n            return;\n        }\n\n        // قفل أمني: إيقاف الموديل تماماً إذا لم يكن الترخيص صالحاً ومطابقاً للجهاز\n        if (!LicenseManager.isSystemLicensed()) {\n            return;\n        }'
+                      'if (lpparam.packageName.equals(MODULE_PACKAGE)) {\n            return;\n        }\n\n        // قفل أمني: تعطيل جميع الميزات إذا لم يكن التطبيق مرخصاً\n        if (!LicenseManager.isSystemLicensed()) {\n            return;\n        }'
                   )
                   with open(hook_path, 'w') as f:
                       f.write(h_content)
-                  print('HookMain.java locked.')
+                  print('HookMain.java locked with License enforcement.')
           "
 
       # 7. قواعد ProGuard وتجاهل تحذيرات Xposed
@@ -517,7 +576,7 @@ jobs:
               print('Gradle release signing configured.')
           "
 
-      # 9. بناء وتجميع الـ APK
+      # 9. تجميع وبناء الـ APK
       - name: Build Protected Release APK
         run: |
           chmod +x gradlew
@@ -531,7 +590,7 @@ jobs:
             exit $EXIT_CODE
           fi
 
-      # 10. رفع ملفات الـ APK الموقعة
+      # 10. رفع ملفات الـ APK الموقعة الجاهزة للتثبيت
       - name: Upload Final Protected APK
         uses: actions/upload-artifact@v4
         with:
@@ -545,7 +604,7 @@ jobs:
           name: Developer-Private-Key-DO-NOT-SHARE
           path: keys_output/private_key.pem
 
-      # 12. تقرير الخطأ التلقائي في Summary في حال حدوث أي فشل
+      # 12. كتابة تقرير الخطأ التلقائي دائماً في Summary عند حدوث أي فشل
       - name: Report Failure Summary
         if: failure()
         run: |
