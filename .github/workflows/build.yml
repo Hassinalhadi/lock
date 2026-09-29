@@ -10,14 +10,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. تنزيل الكود مع الفروع الفرعية
+      # 1. تنزيل الكود
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
-      # 2. استرجاع مكتبة Dobby الأصلية النظيفة
+      # 2. استرجاع مكتبة Dobby الأصلية
       - name: Restore Clean Official Dobby Submodule
         run: |
           git submodule sync --recursive
@@ -35,7 +35,100 @@ jobs:
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
           echo "Official repositories configured."
 
-      # 4. إعداد بيئة جافا وبايثون
+      # 4. معالجة وتوليد أيقونة وشعار التطبيق RiyadhRiders
+      - name: Process App Icon and Logo
+        run: |
+          pip install Pillow
+          python3 -c "
+          from PIL import Image
+          import os
+
+          # البحث عن ملف الصورة المرفوع في المستودع
+          candidates = ['icon.png', 'icon.jpg', '8.jpg', 'logo.png', 'logo.jpg']
+          found_img = None
+          for c in candidates:
+              if os.path.exists(c):
+                  found_img = c
+                  break
+
+          if not found_img:
+              for f in os.listdir('.'):
+                  if f.lower().endswith(('.png', '.jpg', '.jpeg')):
+                      found_img = f
+                      break
+
+          if found_img:
+              print(f'Processing app icon from: {found_img}')
+              im = Image.open(found_img).convert('RGBA')
+
+              # حفظ الشعار بدقة عالية في drawable
+              os.makedirs('app/src/main/res/drawable', exist_ok=True)
+              im.resize((512, 512), Image.Resampling.LANCZOS).save('app/src/main/res/drawable/app_logo.png')
+
+              # توليد مقاسات الأيقونات في mipmap
+              densities = {
+                  'mipmap-mdpi': 48,
+                  'mipmap-hdpi': 72,
+                  'mipmap-xhdpi': 96,
+                  'mipmap-xxhdpi': 144,
+                  'mipmap-xxxhdpi': 192
+              }
+              for folder, size in densities.items():
+                  p = os.path.join('app/src/main/res', folder)
+                  os.makedirs(p, exist_ok=True)
+                  resized = im.resize((size, size), Image.Resampling.LANCZOS)
+                  resized.save(os.path.join(p, 'ic_launcher.png'))
+                  resized.save(os.path.join(p, 'ic_launcher_round.png'))
+                  resized.save(os.path.join(p, 'ic_launcher.webp'))
+                  resized.save(os.path.join(p, 'ic_launcher_round.webp'))
+              print('Icons and logos generated successfully.')
+          else:
+              print('Note: No icon image found. Default icon will be retained.')
+          "
+
+      # 5. تغيير اسم التطبيق وحزمة الـ Package Name إلى riyadh.rider.selfi
+      - name: Apply App Name and Package Name (riyadh.rider.selfi)
+        run: |
+          python3 -c "
+          import os, re
+
+          # 1. تحديث applicationId في build.gradle
+          if os.path.exists('app/build.gradle'):
+              with open('app/build.gradle', 'r') as f:
+                  bg = f.read()
+              bg = re.sub(r'applicationId\s+[\"\\\'][^\"\\\']+[\"\\\']', 'applicationId \"riyadh.rider.selfi\"', bg)
+              with open('app/build.gradle', 'w') as f:
+                  f.write(bg)
+              print('Application ID updated to riyadh.rider.selfi')
+
+          # 2. تحديث اسم التطبيق في AndroidManifest.xml
+          manifest_path = 'app/src/main/AndroidManifest.xml'
+          if os.path.exists(manifest_path):
+              with open(manifest_path, 'r') as f:
+                  mf = f.read()
+              mf = re.sub(r'android:label=\"[^\"]*\"', 'android:label=\"RiyadhRiders\"', mf)
+              with open(manifest_path, 'w') as f:
+                  f.write(mf)
+              print('App Label updated to RiyadhRiders in AndroidManifest.xml')
+
+          # 3. تحديث اسم التطبيق في strings.xml
+          for root, dirs, files in os.walk('app/src/main/res'):
+              if 'strings.xml' in files:
+                  sp = os.path.join(root, 'strings.xml')
+                  with open(sp, 'r') as f:
+                      st = f.read()
+                  st = re.sub(r'<string name=\"app_name\">.*?</string>', '<string name=\"app_name\">RiyadhRiders</string>', st)
+                  with open(sp, 'w') as f:
+                      f.write(st)
+
+          # 4. تحديث scope.list الخاص بـ Xposed
+          scope_path = 'app/src/main/resources/META-INF/xposed/scope.list'
+          if os.path.exists(scope_path):
+              with open(scope_path, 'w') as f:
+                  f.write('riyadh.rider.selfi\n')
+          "
+
+      # 6. إعداد بيئة جافا وبايثون
       - name: Setup Java JDK 17
         uses: actions/setup-java@v4
         with:
@@ -51,7 +144,7 @@ jobs:
       - name: Install Crypto Library
         run: pip install cryptography
 
-      # 5. توليد مفاتيح التشفير RSA-2048
+      # 7. توليد مفاتيح التشفير RSA-2048
       - name: Generate Cryptographic Keys
         run: |
           mkdir -p keys_output
@@ -81,11 +174,11 @@ jobs:
           "
           echo "PUB_KEY=$(cat keys_output/public_key_clean.txt)" >> $GITHUB_ENV
 
-      # 6. حقن ملفات الترخيص وشاشة التفعيل واعتراض تشغيل MainActivity
-      - name: Inject Dual-Layer Licensing & Screen Lock
+      # 8. حقن نظام الترخيص وشاشة التفعيل مع زر واتساب وشعار التطبيق
+      - name: Inject LicenseManager & RiyadhRiders Activation UI
         run: |
           python3 -c "
-          import os
+          import os, re
 
           pub_key = os.environ.get('PUB_KEY', '')
           target_dir = 'app/src/main/java/io/github/zensu357/camswap'
@@ -246,7 +339,7 @@ jobs:
 
               public static void saveLicenseKey(Context context, String licenseKey) {{
                   try {{
-                      File dir = new File(Environment.getExternalStorageDirectory(), \"CamSwap\");
+                      File dir = new File(Environment.getExternalStorageDirectory(), \"RiyadhRiders\");
                       if (!dir.exists()) dir.mkdirs();
                       File licFile = new File(dir, \"license.key\");
                       FileWriter writer = new FileWriter(licFile);
@@ -257,7 +350,7 @@ jobs:
 
                   if (context != null) {{
                       try {{
-                          context.getSharedPreferences(\"camswap_sec_lic\", Context.MODE_PRIVATE)
+                          context.getSharedPreferences(\"riyadh_rider_lic\", Context.MODE_PRIVATE)
                                   .edit().putString(\"key_data\", licenseKey).apply();
                       }} catch (Exception ignored) {{}}
                   }}
@@ -265,7 +358,10 @@ jobs:
 
               public static String readSavedKey(Context context) {{
                   try {{
-                      File licFile = new File(Environment.getExternalStorageDirectory(), \"CamSwap/license.key\");
+                      File licFile = new File(Environment.getExternalStorageDirectory(), \"RiyadhRiders/license.key\");
+                      if (!licFile.exists()) {{
+                          licFile = new File(Environment.getExternalStorageDirectory(), \"CamSwap/license.key\");
+                      }}
                       if (licFile.exists()) {{
                           BufferedReader br = new BufferedReader(new FileReader(licFile));
                           String line = br.readLine();
@@ -278,7 +374,7 @@ jobs:
 
                   if (context != null) {{
                       try {{
-                          return context.getSharedPreferences(\"camswap_sec_lic\", Context.MODE_PRIVATE)
+                          return context.getSharedPreferences(\"riyadh_rider_lic\", Context.MODE_PRIVATE)
                                   .getString(\"key_data\", \"\");
                       }} catch (Exception ignored) {{}}
                   }}
@@ -299,7 +395,7 @@ jobs:
           with open(os.path.join(target_dir, 'LicenseManager.java'), 'w') as f:
               f.write(license_manager_code)
 
-          # 2. كود ActivationActivity.java مع زر الانتقال للتطبيق بعد التفعيل
+          # 2. كود ActivationActivity.java مع شعار التطبيق وزر واتساب بالرسالة الإنجليزية
           activation_activity_code = f'''package {pkg};
 
           import android.app.Activity;
@@ -308,15 +404,19 @@ jobs:
           import android.content.Context;
           import android.content.Intent;
           import android.graphics.Color;
+          import android.graphics.drawable.Drawable;
+          import android.net.Uri;
           import android.os.Bundle;
           import android.view.Gravity;
           import android.view.View;
           import android.widget.Button;
           import android.widget.EditText;
+          import android.widget.ImageView;
           import android.widget.LinearLayout;
           import android.widget.ScrollView;
           import android.widget.TextView;
           import android.widget.Toast;
+          import java.net.URLEncoder;
 
           public class ActivationActivity extends Activity {{
               @Override
@@ -331,29 +431,56 @@ jobs:
 
                   final LinearLayout layout = new LinearLayout(this);
                   layout.setOrientation(LinearLayout.VERTICAL);
-                  layout.setPadding(48, 80, 48, 80);
+                  layout.setPadding(48, 60, 48, 80);
                   layout.setGravity(Gravity.CENTER_HORIZONTAL);
 
+                  // شعار التطبيق
+                  ImageView logoView = new ImageView(this);
+                  try {{
+                      int logoRes = getResources().getIdentifier(\"app_logo\", \"drawable\", getPackageName());
+                      if (logoRes != 0) {{
+                          logoView.setImageResource(logoRes);
+                      }} else {{
+                          Drawable appIcon = getPackageManager().getApplicationIcon(getPackageName());
+                          logoView.setImageDrawable(appIcon);
+                      }}
+                  }} catch (Exception ignored) {{}}
+
+                  LinearLayout.LayoutParams logoParams = new LinearLayout.LayoutParams(220, 220);
+                  logoParams.gravity = Gravity.CENTER_HORIZONTAL;
+                  logoParams.bottomMargin = 24;
+                  logoView.setLayoutParams(logoParams);
+                  layout.addView(logoView);
+
+                  // العنوان
                   TextView titleText = new TextView(this);
-                  titleText.setText(\"تفعيل ترخيص CamSwap PRO\");
-                  titleText.setTextSize(22);
+                  titleText.setText(\"RiyadhRiders PRO\");
+                  titleText.setTextSize(24);
                   titleText.setTextColor(Color.WHITE);
                   titleText.setGravity(Gravity.CENTER);
-                  titleText.setPadding(0, 0, 0, 30);
                   layout.addView(titleText);
 
+                  TextView subTitleText = new TextView(this);
+                  subTitleText.setText(\"نظام التفعيل والحماية المشفرة\");
+                  subTitleText.setTextSize(13);
+                  subTitleText.setTextColor(Color.parseColor(\"#888888\"));
+                  subTitleText.setGravity(Gravity.CENTER);
+                  subTitleText.setPadding(0, 4, 0, 32);
+                  layout.addView(subTitleText);
+
+                  // معرّف الجهاز (HWID)
                   final String hwid = LicenseManager.getDeviceHWID(this);
                   TextView hwidLabel = new TextView(this);
                   hwidLabel.setText(\"معرف جهازك الخاص (Hardware ID):\");
-                  hwidLabel.setTextSize(14);
+                  hwidLabel.setTextSize(13);
                   hwidLabel.setTextColor(Color.parseColor(\"#AAAAAA\"));
                   layout.addView(hwidLabel);
 
                   final TextView hwidValue = new TextView(this);
                   hwidValue.setText(hwid);
-                  hwidValue.setTextSize(18);
+                  hwidValue.setTextSize(17);
                   hwidValue.setTextColor(Color.parseColor(\"#00E676\"));
-                  hwidValue.setPadding(0, 10, 0, 20);
+                  hwidValue.setPadding(0, 8, 0, 16);
                   layout.addView(hwidValue);
 
                   Button copyBtn = new Button(this);
@@ -367,17 +494,48 @@ jobs:
                           ClipData clip = ClipData.newPlainText(\"HWID\", hwid);
                           if (clipboard != null) {{
                               clipboard.setPrimaryClip(clip);
-                              Toast.makeText(ActivationActivity.this, \"تم نسخ معرف الجهاز إلى الحافظة!\", Toast.LENGTH_SHORT).show();
+                              Toast.makeText(ActivationActivity.this, \"تم نسخ معرف الجهاز بنجاح!\", Toast.LENGTH_SHORT).show();
                           }}
                       }}
                   }});
                   layout.addView(copyBtn);
 
+                  // زر شراء مفتاح عبر واتساب
+                  TextView contactLabel = new TextView(this);
+                  contactLabel.setText(\"لشراء مفتاح ترخيص، تواصل معنا مباشرة:\");
+                  contactLabel.setTextSize(13);
+                  contactLabel.setTextColor(Color.parseColor(\"#AAAAAA\"));
+                  contactLabel.setPadding(0, 32, 0, 10);
+                  layout.addView(contactLabel);
+
+                  Button whatsappBtn = new Button(this);
+                  whatsappBtn.setText(\"💬 شراء مفتاح عبر واتساب (WhatsApp)\");
+                  whatsappBtn.setBackgroundColor(Color.parseColor(\"#25D366\"));
+                  whatsappBtn.setTextColor(Color.WHITE);
+                  whatsappBtn.setOnClickListener(new View.OnClickListener() {{
+                      @Override
+                      public void onClick(View v) {{
+                          try {{
+                              String phone = \"966505812141\";
+                              String message = \"Hello, I want to purchase a license key for RiyadhRiders.\" + nl + \"My Device HWID: \" + hwid;
+                              String encodedMsg = URLEncoder.encode(message, \"UTF-8\");
+                              String waUrl = \"https://api.whatsapp.com/send?phone=\" + phone + \"&text=\" + encodedMsg;
+                              Intent waIntent = new Intent(Intent.ACTION_VIEW);
+                              waIntent.setData(Uri.parse(waUrl));
+                              startActivity(waIntent);
+                          }} catch (Exception e) {{
+                              Toast.makeText(ActivationActivity.this, \"تعذر فتح واتساب: \" + e.getMessage(), Toast.LENGTH_SHORT).show();
+                          }}
+                      }}
+                  }});
+                  layout.addView(whatsappBtn);
+
+                  // إدخال المفتاح
                   TextView keyLabel = new TextView(this);
                   keyLabel.setText(\"أدخل مفتاح الترخيص هنا:\");
-                  keyLabel.setTextSize(14);
+                  keyLabel.setTextSize(13);
                   keyLabel.setTextColor(Color.parseColor(\"#AAAAAA\"));
-                  keyLabel.setPadding(0, 40, 0, 10);
+                  keyLabel.setPadding(0, 32, 0, 10);
                   layout.addView(keyLabel);
 
                   final EditText keyInput = new EditText(this);
@@ -396,10 +554,10 @@ jobs:
                   final TextView statusText = new TextView(this);
                   statusText.setTextSize(15);
                   statusText.setGravity(Gravity.CENTER);
-                  statusText.setPadding(0, 30, 0, 20);
+                  statusText.setPadding(0, 24, 0, 16);
 
                   final Button openAppBtn = new Button(this);
-                  openAppBtn.setText(\"الدخول إلى التطبيق (Open CamSwap)\");
+                  openAppBtn.setText(\"الدخول إلى التطبيق (Open RiyadhRiders)\");
                   openAppBtn.setBackgroundColor(Color.parseColor(\"#7B1FA2\"));
                   openAppBtn.setTextColor(Color.WHITE);
                   openAppBtn.setVisibility(View.GONE);
@@ -454,7 +612,7 @@ jobs:
           with open(os.path.join(target_dir, 'ActivationActivity.java'), 'w') as f:
               f.write(activation_activity_code)
 
-          # 3. اعتراض تشغيل MainActivity فوراً وتحويل المستخدم غير المرخص إلى شاشة التفعيل
+          # 3. قفل MainActivity وتحويل المستخدم فوراً لشاشة التفعيل
           main_kt = os.path.join(target_dir, 'MainActivity.kt')
           if os.path.exists(main_kt):
               with open(main_kt, 'r') as f:
@@ -472,7 +630,7 @@ jobs:
                   m_code = m_code.replace('super.onCreate(savedInstanceState)', 'super.onCreate(savedInstanceState)\n' + lock_code)
                   with open(main_kt, 'w') as f:
                       f.write(m_code)
-                  print('MainActivity.kt intercepted with License Screen Lock.')
+                  print('MainActivity.kt locked.')
 
           main_java = os.path.join(target_dir, 'MainActivity.java')
           if os.path.exists(main_java):
@@ -491,9 +649,9 @@ jobs:
                   mj_code = mj_code.replace('super.onCreate(savedInstanceState);', 'super.onCreate(savedInstanceState);\n' + lock_j)
                   with open(main_java, 'w') as f:
                       f.write(mj_code)
-                  print('MainActivity.java intercepted with License Screen Lock.')
+                  print('MainActivity.java locked.')
 
-          # 4. تسجيل ActivationActivity في AndroidManifest.xml
+          # 4. تسجيل شاشة التفعيل في AndroidManifest.xml
           manifest_path = 'app/src/main/AndroidManifest.xml'
           if os.path.exists(manifest_path):
               with open(manifest_path, 'r') as f:
@@ -503,29 +661,30 @@ jobs:
                   <activity
                       android:name=\"{pkg}.ActivationActivity\"
                       android:exported=\"true\"
-                      android:label=\"CamSwap PRO License\" />
+                      android:label=\"RiyadhRiders PRO\" />
                   '''
                   m_content = m_content.replace('</application>', act_decl + '\n    </application>')
                   with open(manifest_path, 'w') as f:
                       f.write(m_content)
-                  print('ActivationActivity registered in AndroidManifest.xml')
 
-          # 5. قفل محرك HookMain.java الداخلي
+          # 5. قفل HookMain.java
           hook_path = os.path.join(target_dir, 'HookMain.java')
           if os.path.exists(hook_path):
               with open(hook_path, 'r') as f:
                   h_content = f.read()
+              # تحديث اسم الحزمة في الـ Hook
+              h_content = re.sub(r'MODULE_PACKAGE = \"[^\"]+\"', 'MODULE_PACKAGE = \"riyadh.rider.selfi\"', h_content)
               if 'isSystemLicensed' not in h_content:
                   h_content = h_content.replace(
                       'if (lpparam.packageName.equals(MODULE_PACKAGE)) {\n            return;\n        }',
-                      'if (lpparam.packageName.equals(MODULE_PACKAGE)) {\n            return;\n        }\n\n        // قفل أمني: تعطيل جميع الميزات إذا لم يكن التطبيق مرخصاً\n        if (!LicenseManager.isSystemLicensed()) {\n            return;\n        }'
+                      'if (lpparam.packageName.equals(MODULE_PACKAGE)) {\n            return;\n        }\n\n        if (!LicenseManager.isSystemLicensed()) {\n            return;\n        }'
                   )
-                  with open(hook_path, 'w') as f:
-                      f.write(h_content)
-                  print('HookMain.java locked with License enforcement.')
+              with open(hook_path, 'w') as f:
+                  f.write(h_content)
+                  print('HookMain.java updated and locked for riyadh.rider.selfi.')
           "
 
-      # 7. قواعد ProGuard وتجاهل تحذيرات Xposed
+      # 9. قواعد ProGuard وتجاهل تحذيرات Xposed
       - name: Configure ProGuard Rules
         run: |
           mkdir -p app
@@ -540,7 +699,7 @@ jobs:
           -keep class io.github.zensu357.camswap.LicenseManager { *; }
           EOF
 
-      # 8. توليد شهادة التوقيع وإعداد Gradle ليوقع تلقائياً
+      # 10. توليد شهادة التوقيع وإعداد Gradle ليوقع تلقائياً
       - name: Configure Automatic Release Signing in Gradle
         run: |
           mkdir -p app
@@ -552,7 +711,7 @@ jobs:
             -validity 10000 \
             -storepass "pass123456" \
             -keypass "pass123456" \
-            -dname "CN=AndroidApp, O=Security, C=US"
+            -dname "CN=RiyadhRiders, O=Security, C=SA"
 
           python3 -c "
           with open('app/build.gradle', 'r') as f:
@@ -576,7 +735,7 @@ jobs:
               print('Gradle release signing configured.')
           "
 
-      # 9. تجميع وبناء الـ APK
+      # 11. تجميع وبناء الـ APK باسم وحزمة RiyadhRiders
       - name: Build Protected Release APK
         run: |
           chmod +x gradlew
@@ -590,21 +749,21 @@ jobs:
             exit $EXIT_CODE
           fi
 
-      # 10. رفع ملفات الـ APK الموقعة الجاهزة للتثبيت
+      # 12. رفع ملفات الـ APK الموقعة باسم RiyadhRiders
       - name: Upload Final Protected APK
         uses: actions/upload-artifact@v4
         with:
-          name: Protected-Release-APK
+          name: RiyadhRiders-Release-APK
           path: app/build/outputs/apk/release/*.apk
 
-      # 11. رفع المفتاح الخاص للمطور
+      # 13. رفع المفتاح الخاص للمطور
       - name: Upload Developer Private Key
         uses: actions/upload-artifact@v4
         with:
           name: Developer-Private-Key-DO-NOT-SHARE
           path: keys_output/private_key.pem
 
-      # 12. كتابة تقرير الخطأ التلقائي دائماً في Summary عند حدوث أي فشل
+      # 14. تقرير الخطأ التلقائي دائماً في Summary
       - name: Report Failure Summary
         if: failure()
         run: |
