@@ -51,13 +51,25 @@ jobs:
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
           echo "Official repositories configured."
 
-      # 5. معالجة وتوليد أيقونة وشعار التطبيق RiyadhRiders
+      # 5. معالجة وتوليد أيقونة وشعار التطبيق RiyadhRiders بدون تكرار
       - name: Process App Icon and Logo
         run: |
           cat << 'EOF' > process_icon.py
-          import os
+          import os, glob, shutil
           from PIL import Image
 
+          # 1. حذف جميع الأيقونات القديمة لتفادي خطأ Duplicate resources
+          for old_icon in glob.glob('app/src/main/res/mipmap*/*launcher*'):
+              try:
+                  os.remove(old_icon)
+              except Exception:
+                  pass
+
+          # حذف مجلد أيقونات anydpi القديمة لضمان تطبيق الشعار الجديد على أندرويد الحديث
+          if os.path.exists('app/src/main/res/mipmap-anydpi-v26'):
+              shutil.rmtree('app/src/main/res/mipmap-anydpi-v26', ignore_errors=True)
+
+          # 2. البحث عن صورة الشعار المرفوعة
           candidates = ['8.jpg', 'icon.png', 'icon.jpg', 'logo.png', 'logo.jpg']
           found_img = None
           for c in candidates:
@@ -75,9 +87,11 @@ jobs:
               print(f"Processing app icon from: {found_img}")
               im = Image.open(found_img).convert('RGBA')
 
+              # حفظ الشعار بدقة عالية في drawable لاستخدامه داخل واجهة التفعيل
               os.makedirs('app/src/main/res/drawable', exist_ok=True)
               im.resize((512, 512), Image.Resampling.LANCZOS).save('app/src/main/res/drawable/app_logo.png')
 
+              # توليد مقاسات الأيقونات الرسمية بصيغة PNG حصراً
               densities = {
                   'mipmap-mdpi': 48,
                   'mipmap-hdpi': 72,
@@ -91,11 +105,9 @@ jobs:
                   resized = im.resize((size, size), Image.Resampling.LANCZOS)
                   resized.save(os.path.join(p, 'ic_launcher.png'))
                   resized.save(os.path.join(p, 'ic_launcher_round.png'))
-                  resized.save(os.path.join(p, 'ic_launcher.webp'))
-                  resized.save(os.path.join(p, 'ic_launcher_round.webp'))
-              print("Icons and logos generated successfully across all densities.")
+              print("Clean icons and logos generated successfully with zero duplicates.")
           else:
-              print("Notice: No custom image found in root. Default icon kept.")
+              print("Notice: No custom image found in root.")
           EOF
           python3 process_icon.py
 
@@ -611,7 +623,7 @@ jobs:
           with open(os.path.join(target_dir, 'ActivationActivity.java'), 'w') as f:
               f.write(activation_activity_code)
 
-          # 3. قفل MainActivity وتحويل المستخدم لشاشة التفعيل
+          # 3. قفل MainActivity وتحويل المستخدم فوراً لشاشة التفعيل
           main_kt = os.path.join(target_dir, 'MainActivity.kt')
           if os.path.exists(main_kt):
               with open(main_kt, 'r') as f:
