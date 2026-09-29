@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. تنزيل الكود مع الفروع الفرعية
+      # 1. تنزيل الكود
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
@@ -31,9 +31,9 @@ jobs:
           python-version: '3.11'
 
       - name: Install Python Dependencies
-        run: pip install cryptography Pillow
+        run: pip install cryptography Pillow pyyaml
 
-      # 3. استرجاع مكتبة Dobby الأصلية النظيفة
+      # 3. استرجاع مكتبة Dobby النظيفة
       - name: Restore Clean Official Dobby Submodule
         run: |
           git submodule sync --recursive
@@ -42,7 +42,7 @@ jobs:
           git submodule foreach --recursive git clean -fdx
           echo "Dobby official source restored cleanly."
 
-      # 4. استبدال سيرفرات علي بابا بمستودعات Google و Maven الرسمية
+      # 4. استبدال سيرفرات علي بابا بالمستودعات الرسمية
       - name: Replace Aliyun Mirrors with Official Repositories
         run: |
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
@@ -54,11 +54,10 @@ jobs:
       # 5. معالجة وتوليد أيقونة وشعار التطبيق بدون تكرار
       - name: Process App Icon and Logo
         run: |
-          cat << 'EOF' > process_icon.py
+          cat << 'PYEOF' > process_icon.py.raw
           import os, glob, shutil
           from PIL import Image
 
-          # حذف أي أيقونات قديمة لتفادي أخطاء التكرار
           for old_icon in glob.glob('app/src/main/res/mipmap*/*launcher*'):
               try:
                   os.remove(old_icon)
@@ -68,7 +67,6 @@ jobs:
           if os.path.exists('app/src/main/res/mipmap-anydpi-v26'):
               shutil.rmtree('app/src/main/res/mipmap-anydpi-v26', ignore_errors=True)
 
-          # البحث عن الشعار المرفوع
           candidates = ['8.jpg', 'icon.png', 'icon.jpg', 'logo.png', 'logo.jpg']
           found_img = None
           for c in candidates:
@@ -103,15 +101,15 @@ jobs:
                   resized.save(os.path.join(p, 'ic_launcher.png'))
                   resized.save(os.path.join(p, 'ic_launcher_round.png'))
               print("App icons & drawables updated successfully.")
-          EOF
+          PYEOF
+          python3 -c "import textwrap; open('process_icon.py', 'w').write(textwrap.dedent(open('process_icon.py.raw').read()))"
           python3 process_icon.py
 
       # 6. إزالة اللغة الصينية، إعداد العربية والإنجليزية، وتحديث حقوق المستخدم
       - name: Remove Chinese, Add Arabic Translation, and Rebrand UI
         run: |
-          cat << 'EOF' > rebrand_ui.py
+          cat << 'PYEOF' > rebrand_ui.py.raw
           import os, re, shutil, glob
-          import xml.etree.ElementTree as ET
 
           # 1. إزالة جميع مجلدات اللغة الصينية
           for zh_dir in glob.glob('app/src/main/res/values-zh*'):
@@ -120,19 +118,22 @@ jobs:
 
           # 2. حصر اللغات على الإنجليزية والعربية في build.gradle
           if os.path.exists('app/build.gradle'):
-              with open('app/build.gradle', 'r') as f:
-                  bg = f.read()
-              bg = re.sub(r"applicationId\s+['\"][^'\"]+['\"]", 'applicationId "riyadh.rider.selfi"', bg)
-              if 'resConfigs' not in bg:
-                  bg = re.sub(r'(defaultConfig\s*\{)', r'\1\n        resourceConfigurations += ["en", "ar"]', bg)
-              with open('app/build.gradle', 'w') as f:
-                  f.write(bg)
+              try:
+                  with open('app/build.gradle', 'r', encoding='utf-8', errors='ignore') as f:
+                      bg = f.read()
+                  bg = re.sub(r'applicationId\s+.*', 'applicationId "riyadh.rider.selfi"', bg)
+                  if 'resConfigs' not in bg:
+                      bg = re.sub(r'(defaultConfig\s*\{)', r'\1\n        resourceConfigurations += ["en", "ar"]', bg)
+                  with open('app/build.gradle', 'w', encoding='utf-8') as f:
+                      f.write(bg)
+                  print("Updated build.gradle")
+              except Exception as e:
+                  print(f"Notice build.gradle: {e}")
 
-          # 3. تحديث ملفات strings.xml الإنجليزية وحذف روابط المطور القديم
-          for val_dir in ['app/src/main/res/values', 'app/src/main/res/values-en']:
-              s_path = os.path.join(val_dir, 'strings.xml')
-              if os.path.exists(s_path):
-                  with open(s_path, 'r', encoding='utf-8') as f:
+          # 3. تحديث ملفات strings.xml وحذف حقوق المطور القديم
+          for s_path in glob.glob('app/src/main/res/values*/strings.xml'):
+              try:
+                  with open(s_path, 'r', encoding='utf-8', errors='ignore') as f:
                       st = f.read()
                   st = re.sub(r'CamSwap', 'RiyadhRiders', st)
                   st = re.sub(r'View &amp; report issues on GitHub', 'WhatsApp Support: +966505812141', st)
@@ -143,11 +144,14 @@ jobs:
                   st = re.sub(r'alberta davis', 'RiyadhRiders', st)
                   with open(s_path, 'w', encoding='utf-8') as f:
                       f.write(st)
+                  print(f"Updated strings in: {s_path}")
+              except Exception as e:
+                  print(f"Notice strings: {e}")
 
-          # 4. إنشاء ملف الترجمة العربية الكامل values-ar/strings.xml
+          # 4. إنشاء ملف الترجمة العربية الكامل
           ar_dir = 'app/src/main/res/values-ar'
           os.makedirs(ar_dir, exist_ok=True)
-          ar_strings = '''<?xml version="1.0" encoding="utf-8"?>
+          ar_strings = """<?xml version="1.0" encoding="utf-8"?>
           <resources>
               <string name="app_name">RiyadhRiders</string>
               <string name="module_not_active">الموديول غير مفعل</string>
@@ -162,7 +166,7 @@ jobs:
               <string name="manage">إدارة الوسائط</string>
               <string name="settings">الإعدادات</string>
           </resources>
-          '''
+          """
           with open(os.path.join(ar_dir, 'strings.xml'), 'w', encoding='utf-8') as f:
               f.write(ar_strings)
           print("Arabic translation values-ar/strings.xml created.")
@@ -172,111 +176,56 @@ jobs:
               for file in files:
                   if file.endswith(('.kt', '.java')):
                       fp = os.path.join(root, file)
-                      with open(fp, 'r', encoding='utf-8', errors='ignore') as f:
-                          code = f.read()
+                      try:
+                          with open(fp, 'r', encoding='utf-8', errors='ignore') as f:
+                              code = f.read()
 
-                      orig = code
-                      # استبدال الروابط دون المساس بأسماء الحزم (Packages)
-                      code = re.sub(r'https?://github\.com/zensu357/[^\s"'\''`)]+', 'https://api.whatsapp.com/send?phone=966505812141', code)
-                      code = re.sub(r'https?://github\.com/[a-zA-Z0-9_\-\./]+', 'https://api.whatsapp.com/send?phone=966505812141', code)
-                      code = re.sub(r'https?://t\.me/[a-zA-Z0-9_\-]+', 'https://t.me/zeko_1x', code)
+                          orig = code
+                          code = re.sub(r'https?://github\.com/[a-zA-Z0-9_\-\./]+', 'https://api.whatsapp.com/send?phone=966505812141', code)
+                          code = re.sub(r'https?://t\.me/[a-zA-Z0-9_\-]+', 'https://t.me/zeko_1x', code)
+                          code = code.replace('"CamSwap"', '"RiyadhRiders"')
+                          code = code.replace('View & report issues on GitHub', 'WhatsApp: +966505812141')
+                          code = code.replace('Join Telegram Channel', 'Telegram: @zeko_1x')
+                          code = code.replace('Click to check on GitHub', 'RiyadhRiders Official')
+                          code = code.replace('"alberta davis"', '"RiyadhRiders"')
 
-                      code = code.replace('"CamSwap"', '"RiyadhRiders"')
-                      code = code.replace('View & report issues on GitHub', 'WhatsApp: +966505812141')
-                      code = code.replace('Join Telegram Channel', 'Telegram: @zeko_1x')
-                      code = code.replace('Click to check on GitHub', 'RiyadhRiders Official')
-                      code = code.replace('"alberta davis"', '"RiyadhRiders"')
+                          if code != orig:
+                              with open(fp, 'w', encoding='utf-8') as f:
+                                  f.write(code)
+                              print(f"Rebranded: {file}")
+                      except Exception as e:
+                          print(f"Notice source {file}: {e}")
 
-                      if code != orig:
-                          with open(fp, 'w', encoding='utf-8') as f:
-                              f.write(code)
-                          print(f"Rebranded file: {file}")
-
-          # 6. حقن الشعار وبطاقة المطور في شاشة HomeScreen.kt
-          for root, dirs, files in os.walk('app/src/main/java'):
-              for file in files:
-                  if 'home' in file.lower() and file.endswith('.kt'):
-                      hp = os.path.join(root, file)
-                      with open(hp, 'r', encoding='utf-8') as f:
-                          h_code = f.read()
-
-                      if 'app_logo' not in h_code:
-                          # إضافة الاستيرادات اللازمة
-                          needed_imports = [
-                              "import androidx.compose.foundation.Image",
-                              "import androidx.compose.foundation.layout.Row",
-                              "import androidx.compose.foundation.layout.size",
-                              "import androidx.compose.foundation.layout.fillMaxWidth",
-                              "import androidx.compose.ui.Alignment",
-                              "import androidx.compose.ui.res.painterResource",
-                              "import androidx.compose.material3.CardDefaults",
-                              "import androidx.compose.material3.MaterialTheme",
-                              "import io.github.zensu357.camswap.R"
-                          ]
-                          for imp in needed_imports:
-                              if imp not in h_code:
-                                  h_code = re.sub(r'(package [^\n]+)', r'\1\n' + imp, h_code, count=1)
-
-                          logo_header_code = '''
-                              Card(
-                                  modifier = Modifier.fillMaxWidth().padding(vertical = 8.dp),
-                                  colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)
-                              ) {
-                                  Row(
-                                      modifier = Modifier.padding(16.dp),
-                                      verticalAlignment = Alignment.CenterVertically
-                                  ) {
-                                      Image(
-                                          painter = painterResource(id = R.drawable.app_logo),
-                                          contentDescription = "RiyadhRiders Logo",
-                                          modifier = Modifier.size(52.dp).padding(end = 12.dp)
-                                      )
-                                      Column {
-                                          Text(
-                                              text = "RiyadhRiders PRO",
-                                              style = MaterialTheme.typography.titleMedium
-                                          )
-                                          Text(
-                                              text = "المطور: @zeko_1x | واتساب: 966505812141+",
-                                              style = MaterialTheme.typography.bodySmall,
-                                              color = MaterialTheme.colorScheme.primary
-                                          )
-                                      }
-                                  }
-                              }
-                          '''
-                          # حقن بطاقة الشعار في بداية العمود
-                          if 'Column(' in h_code:
-                              h_code = re.sub(r'(Column\([^)]*\)\s*\{)', r'\1\n' + logo_header_code, h_code, count=1)
-                          elif 'Column {' in h_code:
-                              h_code = h_code.replace('Column {', 'Column {\n' + logo_header_code, 1)
-
-                          with open(hp, 'w', encoding='utf-8') as f:
-                              f.write(h_code)
-                          print(f"Logo and developer header injected into {file}")
-
-          # 7. تحديث AndroidManifest.xml
+          # 6. تحديث AndroidManifest.xml
           m_path = 'app/src/main/AndroidManifest.xml'
           if os.path.exists(m_path):
-              with open(m_path, 'r', encoding='utf-8') as f:
-                  mf = f.read()
-              mf = re.sub(r'android:label="[^"]*"', 'android:label="RiyadhRiders"', mf)
-              with open(m_path, 'w', encoding='utf-8') as f:
-                  f.write(mf)
+              try:
+                  with open(m_path, 'r', encoding='utf-8', errors='ignore') as f:
+                      mf = f.read()
+                  mf = re.sub(r'android:label="[^"]*"', 'android:label="RiyadhRiders"', mf)
+                  with open(m_path, 'w', encoding='utf-8') as f:
+                      f.write(mf)
+                  print("Updated AndroidManifest.xml")
+              except Exception as e:
+                  print(f"Notice manifest: {e}")
 
-          # 8. تحديث ملف scope.list
+          # 7. تحديث ملف scope.list
           sc_path = 'app/src/main/resources/META-INF/xposed/scope.list'
           if os.path.exists(sc_path):
-              with open(sc_path, 'w', encoding='utf-8') as f:
-                  f.write('riyadh.rider.selfi\n')
-          EOF
+              try:
+                  with open(sc_path, 'w', encoding='utf-8') as f:
+                      f.write('riyadh.rider.selfi\n')
+              except Exception as e:
+                  print(f"Notice scope: {e}")
+          PYEOF
+          python3 -c "import textwrap; open('rebrand_ui.py', 'w').write(textwrap.dedent(open('rebrand_ui.py.raw').read()))"
           python3 rebrand_ui.py
 
       # 7. توليد مفاتيح التشفير RSA-2048
       - name: Generate Cryptographic Keys
         run: |
           mkdir -p keys_output
-          cat << 'EOF' > gen_keys.py
+          cat << 'PYEOF' > gen_keys.py.raw
           from cryptography.hazmat.primitives.asymmetric import rsa
           from cryptography.hazmat.primitives import serialization
 
@@ -299,14 +248,15 @@ jobs:
           clean_pub = ''.join([l for l in pub_pem.decode('utf-8').splitlines() if not l.startswith('-----')])
           with open('keys_output/public_key_clean.txt', 'w') as f:
               f.write(clean_pub)
-          EOF
+          PYEOF
+          python3 -c "import textwrap; open('gen_keys.py', 'w').write(textwrap.dedent(open('gen_keys.py.raw').read()))"
           python3 gen_keys.py
           echo "PUB_KEY=$(cat keys_output/public_key_clean.txt)" >> $GITHUB_ENV
 
-      # 8. حقن نظام الحماية وشاشة التفعيل مع زر واتساب وتليجرام والشعار
+      # 8. حقن نظام الحماية وشاشة التفعيل
       - name: Inject LicenseManager & RiyadhRiders Activation UI
         run: |
-          cat << 'EOF' > inject_ui.py
+          cat << 'PYEOF' > inject_ui.py.raw
           import os, re
 
           pub_key = os.environ.get('PUB_KEY', '')
@@ -325,7 +275,6 @@ jobs:
           if os.path.exists(old_kt):
               os.remove(old_kt)
 
-          # 1. كود LicenseManager.java
           license_manager_code = f'''package {pkg};
 
           import android.content.Context;
@@ -524,7 +473,6 @@ jobs:
           with open(os.path.join(target_dir, 'LicenseManager.java'), 'w') as f:
               f.write(license_manager_code)
 
-          # 2. كود ActivationActivity.java
           activation_activity_code = f'''package {pkg};
 
           import android.app.Activity;
@@ -563,7 +511,6 @@ jobs:
                   layout.setPadding(48, 60, 48, 80);
                   layout.setGravity(Gravity.CENTER_HORIZONTAL);
 
-                  // شعار التطبيق
                   ImageView logoView = new ImageView(this);
                   try {{
                       int logoRes = getResources().getIdentifier("app_logo", "drawable", getPackageName());
@@ -581,7 +528,6 @@ jobs:
                   logoView.setLayoutParams(logoParams);
                   layout.addView(logoView);
 
-                  // العناوين
                   TextView titleText = new TextView(this);
                   titleText.setText("RiyadhRiders PRO");
                   titleText.setTextSize(24);
@@ -597,7 +543,6 @@ jobs:
                   subTitleText.setPadding(0, 4, 0, 32);
                   layout.addView(subTitleText);
 
-                  // معرّف الجهاز (HWID)
                   final String hwid = LicenseManager.getDeviceHWID(this);
                   TextView hwidLabel = new TextView(this);
                   hwidLabel.setText("معرف جهازك الخاص (Hardware ID):");
@@ -629,7 +574,6 @@ jobs:
                   }});
                   layout.addView(copyBtn);
 
-                  // زر شراء مفتاح عبر واتساب
                   TextView contactLabel = new TextView(this);
                   contactLabel.setText("لطلب مفتاح الترخيص تواصل مع المطور:");
                   contactLabel.setTextSize(13);
@@ -659,7 +603,6 @@ jobs:
                   }});
                   layout.addView(whatsappBtn);
 
-                  // زر تليجرام
                   Button telegramBtn = new Button(this);
                   telegramBtn.setText("✈️ تواصل عبر تليجرام (@zeko_1x)");
                   telegramBtn.setBackgroundColor(Color.parseColor("#0088CC"));
@@ -681,7 +624,6 @@ jobs:
                   }});
                   layout.addView(telegramBtn);
 
-                  // حقل إدخال المفتاح
                   TextView keyLabel = new TextView(this);
                   keyLabel.setText("أدخل مفتاح الترخيص:");
                   keyLabel.setTextSize(13);
@@ -763,7 +705,6 @@ jobs:
           with open(os.path.join(target_dir, 'ActivationActivity.java'), 'w') as f:
               f.write(activation_activity_code)
 
-          # 3. قفل MainActivity وتحويل المستخدم فوراً لشاشة التفعيل
           main_kt = os.path.join(target_dir, 'MainActivity.kt')
           if os.path.exists(main_kt):
               with open(main_kt, 'r') as f:
@@ -800,7 +741,6 @@ jobs:
                   with open(main_java, 'w') as f:
                       f.write(mj_code)
 
-          # 4. تسجيل شاشة التفعيل في AndroidManifest.xml
           manifest_path = 'app/src/main/AndroidManifest.xml'
           if os.path.exists(manifest_path):
               with open(manifest_path, 'r') as f:
@@ -816,7 +756,6 @@ jobs:
                   with open(manifest_path, 'w') as f:
                       f.write(m_content)
 
-          # 5. قفل HookMain.java
           hook_path = os.path.join(target_dir, 'HookMain.java')
           if os.path.exists(hook_path):
               with open(hook_path, 'r') as f:
@@ -829,10 +768,11 @@ jobs:
                   )
               with open(hook_path, 'w') as f:
                   f.write(h_content)
-          EOF
+          PYEOF
+          python3 -c "import textwrap; open('inject_ui.py', 'w').write(textwrap.dedent(open('inject_ui.py.raw').read()))"
           python3 inject_ui.py
 
-      # 9. قواعد ProGuard وتجاهل تحذيرات Xposed
+      # 9. قواعد ProGuard
       - name: Configure ProGuard Rules
         run: |
           mkdir -p app
@@ -847,7 +787,7 @@ jobs:
           -keep class io.github.zensu357.camswap.LicenseManager { *; }
           EOF
 
-      # 10. إعداد شهادة التوقيع الرسمية
+      # 10. إعداد شهادة التوقيع
       - name: Configure Automatic Release Signing in Gradle
         run: |
           mkdir -p app
@@ -861,7 +801,7 @@ jobs:
             -keypass "pass123456" \
             -dname "CN=RiyadhRiders, O=Security, C=SA"
 
-          cat << 'EOF' > setup_signing.py
+          cat << 'PYEOF' > setup_signing.py.raw
           with open('app/build.gradle', 'r') as f:
               content = f.read()
 
@@ -881,7 +821,8 @@ jobs:
               with open('app/build.gradle', 'w') as f:
                   f.write(content)
               print("Gradle release signing configured.")
-          EOF
+          PYEOF
+          python3 -c "import textwrap; open('setup_signing.py', 'w').write(textwrap.dedent(open('setup_signing.py.raw').read()))"
           python3 setup_signing.py
 
       # 11. تجميع وبناء الـ APK
@@ -898,14 +839,14 @@ jobs:
             exit $EXIT_CODE
           fi
 
-      # 12. رفع ملفات الـ APK النهائية
+      # 12. رفع ملفات الـ APK
       - name: Upload Final Protected APK
         uses: actions/upload-artifact@v4
         with:
           name: RiyadhRiders-Release-APK
           path: app/build/outputs/apk/release/*.apk
 
-      # 13. رفع المفتاح الخاص للمطور لتوليد التراخيص
+      # 13. رفع المفتاح الخاص
       - name: Upload Developer Private Key
         uses: actions/upload-artifact@v4
         with:
