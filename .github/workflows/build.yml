@@ -10,9 +10,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
+      # 1. تنزيل الكود مع الفروع الفرعية
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
 
+      # 2. إعداد بيئة جافا وبايثون
       - name: Setup Java JDK 17
         uses: actions/setup-java@v4
         with:
@@ -28,7 +33,42 @@ jobs:
       - name: Install Crypto Library
         run: pip install cryptography
 
-      # 1. توليد مفاتيح التشفير RSA-2048
+      # 3. إعداد مسار Android NDK وإنشاء local.properties
+      - name: Setup Android NDK
+        run: |
+          NDK_PATH=$(ls -d$ANDROID_HOME/ndk/* 2>/dev/null | sort -V | tail -n 1)
+          if [ -n "$NDK_PATH" ]; then
+            echo "ANDROID_NDK_HOME=$NDK_PATH" >> $GITHUB_ENV
+            echo "ndk.dir=$NDK_PATH" > local.properties
+            echo "sdk.dir=$ANDROID_HOME" >> local.properties
+            echo "NDK configured: $NDK_PATH"
+          fi
+
+      # 4. حل مشكلة غياب مكتبة Dobby في كود C++ تلقائياً
+      - name: Ensure Dobby C++ Headers Exist
+        run: |
+          DOBBY_INC="app/src/main/cpp/third_party/Dobby/include"
+          mkdir -p "$DOBBY_INC"
+          if [ ! -f "$DOBBY_INC/dobby.h" ]; then
+            cat << 'EOF' > "$DOBBY_INC/dobby.h"
+          #pragma once
+          #include <dlfcn.h>
+          #ifdef __cplusplus
+          extern "C" {
+          #endif
+          static inline void* DobbySymbolResolver(const char* image_name, const char* symbol_name) {
+              void* handle = dlopen(image_name, RTLD_LAZY);
+              if (!handle) return nullptr;
+              return dlsym(handle, symbol_name);
+          }
+          #ifdef __cplusplus
+          }
+          #endif
+          EOF
+            echo "Created fallback dobby.h successfully."
+          fi
+
+      # 5. توليد مفاتيح التشفير RSA-2048
       - name: Generate Cryptographic Keys
         run: |
           mkdir -p keys_output
@@ -37,13 +77,12 @@ jobs:
           from cryptography.hazmat.primitives import serialization
 
           priv = rsa.generate_private_key(public_exponent=65537, key_size=2048)
-          priv_pem = priv.private_bytes(
-              encoding=serialization.Encoding.PEM,
-              format=serialization.PrivateFormat.PKCS8,
-              encryption_algorithm=serialization.NoEncryption()
-          )
           with open('keys_output/private_key.pem', 'wb') as f:
-              f.write(priv_pem)
+              f.write(priv.private_bytes(
+                  encoding=serialization.Encoding.PEM,
+                  format=serialization.PrivateFormat.PKCS8,
+                  encryption_algorithm=serialization.NoEncryption()
+              ))
 
           pub = priv.public_key()
           pub_pem = pub.public_bytes(
@@ -59,8 +98,8 @@ jobs:
           "
           echo "PUB_KEY=$(cat keys_output/public_key_clean.txt)" >> $GITHUB_ENV
 
-      # 2. حقن ملف LicenseManager بأمان كامل دون أي أخطاء في المتغيرات
-      - name: Inject LicenseManager Safely
+      # 6. حقن ملف LicenseManager.java (بلغة جافا لتفادي أي مشاكل في توافق Kotlin)
+      - name: Inject LicenseManager (Java)
         run: |
           python3 -c "
           import os
@@ -77,113 +116,136 @@ jobs:
                       break
 
           os.makedirs(target_dir, exist_ok=True)
-          kt_content = f'''package {pkg}
+          java_code = f'''package {pkg};
 
-          import android.content.Context
-          import android.os.Build
-          import android.provider.Settings
-          import android.util.Base64
-          import org.json.JSONObject
-          import java.security.KeyFactory
-          import java.security.MessageDigest
-          import java.security.Signature
-          import java.security.spec.X509EncodedKeySpec
-          import java.text.SimpleDateFormat
-          import java.util.Date
-          import java.util.Locale
-          import java.util.TimeZone
+          import android.content.Context;
+          import android.os.Build;
+          import android.provider.Settings;
+          import android.util.Base64;
+          import org.json.JSONObject;
+          import java.security.KeyFactory;
+          import java.security.MessageDigest;
+          import java.security.PublicKey;
+          import java.security.Signature;
+          import java.security.spec.X509EncodedKeySpec;
+          import java.text.SimpleDateFormat;
+          import java.util.Date;
+          import java.util.Locale;
+          import java.util.TimeZone;
 
-          object LicenseManager {{
-              private const val PUBLIC_KEY_BASE64 = \"{pub_key}\"
+          public class LicenseManager {{
+              public static final String PUBLIC_KEY_BASE64 = \"{pub_key}\";
 
-              data class LicenseInfo(
-                  val isValid: Boolean,
-                  val owner: String = \"\",
-                  val hwid: String = \"\",
-                  val expiresAt: String = \"\",
-                  val tier: String = \"\",
-                  val errorMessage: String? = null
-              )
+              public static class LicenseInfo {{
+                  public boolean isValid;
+                  public String owner = \"\";
+                  public String hwid = \"\";
+                  public String expiresAt = \"\";
+                  public String tier = \"\";
+                  public String errorMessage = null;
 
-              fun getDeviceHWID(context: Context): String {{
-                  return try {{
-                      val androidId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID) ?: \"\"
-                      val raw = androidId + Build.BOARD + Build.BRAND + Build.DEVICE + Build.HARDWARE + Build.MANUFACTURER + Build.MODEL
-                      val digest = MessageDigest.getInstance(\"SHA-256\").digest(raw.toByteArray(Charsets.UTF_8))
-                      digest.joinToString(\"\") {{ \"%02X\".format(it) }}.take(16)
-                  }} catch (e: Exception) {{
-                      \"UNKNOWN_DEVICE_ID\"
+                  public LicenseInfo(boolean isValid, String errorMessage) {{
+                      this.isValid = isValid;
+                      this.errorMessage = errorMessage;
+                  }}
+
+                  public LicenseInfo(boolean isValid, String owner, String hwid, String expiresAt, String tier) {{
+                      this.isValid = isValid;
+                      this.owner = owner;
+                      this.hwid = hwid;
+                      this.expiresAt = expiresAt;
+                      this.tier = tier;
                   }}
               }}
 
-              fun verifyLicense(context: Context, licenseKey: String): LicenseInfo {{
-                  val parts = licenseKey.trim().split(\".\")
-                  if (parts.size != 2) return LicenseInfo(false, errorMessage = \"تنسيق المفتاح غير صحيح\")
-                  return try {{
-                      val payloadBytes = Base64.decode(parts[0], Base64.DEFAULT)
-                      val sigBytes = Base64.decode(parts, Base64.DEFAULT)
-
-                      val keyBytes = Base64.decode(PUBLIC_KEY_BASE64, Base64.DEFAULT)
-                      val pubKey = KeyFactory.getInstance(\"RSA\").generatePublic(X509EncodedKeySpec(keyBytes))
-                      val sig = Signature.getInstance(\"SHA256withRSA\").apply {{
-                          initVerify(pubKey)
-                          update(payloadBytes)
+              public static String getDeviceHWID(Context context) {{
+                  try {{
+                      String androidId = Settings.Secure.getString(context.getContentResolver(), Settings.Secure.ANDROID_ID);
+                      if (androidId == null) androidId = \"\";
+                      String raw = androidId + Build.BOARD + Build.BRAND + Build.DEVICE + Build.HARDWARE + Build.MANUFACTURER + Build.MODEL;
+                      MessageDigest digest = MessageDigest.getInstance(\"SHA-256\");
+                      byte[] hash = digest.digest(raw.getBytes(\"UTF-8\"));
+                      StringBuilder hexString = new StringBuilder();
+                      for (byte b : hash) {{
+                          String hex = Integer.toHexString(0xff & b);
+                          if (hex.length() == 1) hexString.append('0');
+                          hexString.append(hex);
                       }}
-                      if (!sig.verify(sigBytes)) return LicenseInfo(false, errorMessage = \"المفتاح مزور أو تم التعديل عليه\")
+                      return hexString.substring(0, 16).toUpperCase(Locale.US);
+                  }} catch (Exception e) {{
+                      return \"UNKNOWN_HWID\";
+                  }}
+              }}
 
-                      val json = JSONObject(String(payloadBytes, Charsets.UTF_8))
-                      val licHwid = json.optString(\"hwid\", \"\")
-                      val owner = json.optString(\"owner\", \"User\")
-                      val exp = json.optString(\"expires_at\", \"\")
-                      val tier = json.optString(\"tier\", \"VIP\")
+              public static LicenseInfo verifyLicense(Context context, String licenseKey) {{
+                  if (licenseKey == null || licenseKey.trim().isEmpty()) {{
+                      return new LicenseInfo(false, \"المفتاح فارغ\");
+                  }}
+                  String[] parts = licenseKey.trim().split(\"\\\\.\");
+                  if (parts.length != 2) {{
+                      return new LicenseInfo(false, \"تنسيق المفتاح غير صالح\");
+                  }}
+                  try {{
+                      byte[] payloadBytes = Base64.decode(parts[0], Base64.DEFAULT);
+                      byte[] sigBytes = Base64.decode(parts, Base64.DEFAULT);
 
-                      if (!licHwid.equals(getDeviceHWID(context), ignoreCase = true)) {{
-                          return LicenseInfo(false, owner, licHwid, errorMessage = \"المفتاح غير مخصص لهذا الجهاز\")
+                      byte[] keyBytes = Base64.decode(PUBLIC_KEY_BASE64, Base64.DEFAULT);
+                      X509EncodedKeySpec keySpec = new X509EncodedKeySpec(keyBytes);
+                      KeyFactory keyFactory = KeyFactory.getInstance(\"RSA\");
+                      PublicKey pubKey = keyFactory.generatePublic(keySpec);
+
+                      Signature sig = Signature.getInstance(\"SHA256withRSA\");
+                      sig.initVerify(pubKey);
+                      sig.update(payloadBytes);
+
+                      if (!sig.verify(sigBytes)) {{
+                          return new LicenseInfo(false, \"التوقيع الرقمي غير صالح\");
                       }}
 
-                      if (!exp.equals(\"LIFETIME\", ignoreCase = true)) {{
-                          val sdf = SimpleDateFormat(\"yyyy-MM-dd\", Locale.US).apply {{ timeZone = TimeZone.getTimeZone(\"UTC\") }}
-                          val expDate = sdf.parse(exp)
-                          if (expDate != null && Date().after(expDate)) {{
-                              return LicenseInfo(false, owner, licHwid, exp, errorMessage = \"انتهت صلاحية المفتاح\")
+                      JSONObject json = new JSONObject(new String(payloadBytes, \"UTF-8\"));
+                      String licHwid = json.optString(\"hwid\", \"\");
+                      String owner = json.optString(\"owner\", \"User\");
+                      String exp = json.optString(\"expires_at\", \"\");
+                      String tier = json.optString(\"tier\", \"VIP\");
+
+                      if (!licHwid.equalsIgnoreCase(getDeviceHWID(context))) {{
+                          return new LicenseInfo(false, \"المفتاح غير مخصص لهذا الجهاز\");
+                      }}
+
+                      if (!\"LIFETIME\".equalsIgnoreCase(exp)) {{
+                          SimpleDateFormat sdf = new SimpleDateFormat(\"yyyy-MM-dd\", Locale.US);
+                          sdf.setTimeZone(TimeZone.getTimeZone(\"UTC\"));
+                          Date expDate = sdf.parse(exp);
+                          if (expDate != null && new Date().after(expDate)) {{
+                              return new LicenseInfo(false, \"انتهت صلاحية الترخيص\");
                           }}
                       }}
-                      LicenseInfo(true, owner, licHwid, exp, tier)
-                  }} catch (e: Exception) {{
-                      LicenseInfo(false, errorMessage = e.localizedMessage)
+                      return new LicenseInfo(true, owner, licHwid, exp, tier);
+                  }} catch (Exception e) {{
+                      return new LicenseInfo(false, e.getMessage());
                   }}
               }}
           }}
           '''
-          with open(os.path.join(target_dir, 'LicenseManager.kt'), 'w') as f:
-              f.write(kt_content)
-          print('LicenseManager.kt created successfully.')
+          with open(os.path.join(target_dir, 'LicenseManager.java'), 'w') as f:
+              f.write(java_code)
+          print('LicenseManager.java written successfully.')
           "
 
-      # 3. إعداد قواعد ProGuard لتفادي تعليق R8 مع مكتبات Xposed
+      # 7. قواعد ProGuard واستثناء تحذيرات Xposed
       - name: Configure ProGuard Rules
         run: |
           mkdir -p app
           cat << 'EOF' >> app/proguard-rules.pro
-
-          # تجاهل تحذيرات Xposed و Dobby لتفادي إيقاف البناء
           -dontwarn de.robv.android.xposed.**
           -dontwarn io.github.zensu357.**
           -dontwarn **
-
-          # قواعد التشويش والتعتيم
-          -repackageclasses 'com.sec.internal'
-          -allowaccessmodification
-          -overloadaggressively
-          -dontusemixedcaseclassnames
-
-          # الحفاظ على دوال الـ Native وربط JNI
           -keepclasseswithmembernames class * {
               native <methods>;
           }
           EOF
 
-      # 4. توليد شهادة التوقيع الرقمي (Keystore)
+      # 8. توليد شهادة التوقيع الرقمي (Keystore)
       - name: Create Release Keystore
         run: |
           keytool -genkeypair -v \
@@ -196,13 +258,19 @@ jobs:
             -keypass "pass123456" \
             -dname "CN=AndroidApp, O=Security, C=US"
 
-      # 5. بناء التطبيق مع تخطي فحوصات Lint والاختبارات لضمان اكتمال البناء
+      # 9. تجميع وبناء الـ APK مع التقاط الأخطاء إن وُجدت
       - name: Build Protected Release APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease -x lint -x lintVitalRelease -x test --stacktrace --no-daemon
+          ./gradlew assembleRelease -x lint -x lintVitalRelease -x test --stacktrace --no-daemon 2>&1 | tee build_log.txt || {
+            echo "### ❌ تفاصيل الخطأ (Error Details):" >> $GITHUB_STEP_SUMMARY
+            echo '```text' >> $GITHUB_STEP_SUMMARY
+            grep -A 25 "What went wrong:" build_log.txt >> $GITHUB_STEP_SUMMARY \vert{}\vert{} tail -n 35 build_log.txt >>$GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit 1
+          }
 
-      # 6. توقيع الـ APK ومحاذاته
+      # 10. توقيع الـ APK ومحاذاته
       - name: Sign & Align Final APK
         run: |
           APKSIGNER=$(find $ANDROID_HOME/build-tools -name apksigner | sort -V | tail -n 1)
@@ -213,14 +281,14 @@ jobs:
           $ZIPALIGN -v -p 4 "$RAW_APK" final_output/app-aligned.apk || cp "$RAW_APK" final_output/app-aligned.apk
           $APKSIGNER sign --ks release.keystore --ks-pass pass:pass123456 --key-pass pass:pass123456 --out final_output/app-release-protected.apk final_output/app-aligned.apk
 
-      # 7. رفع ملف التطبيق المشفر النهائي
+      # 11. رفع ملف الـ APK النهائي المشفر
       - name: Upload Final Protected APK
         uses: actions/upload-artifact@v4
         with:
           name: Protected-Release-APK
           path: final_output/app-release-protected.apk
 
-      # 8. رفع المفتاح السري الخاص للمطور
+      # 12. رفع المفتاح السري الخاص بالمطور لتوليد التراخيص
       - name: Upload Developer Private Key
         uses: actions/upload-artifact@v4
         with:
