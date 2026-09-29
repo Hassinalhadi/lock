@@ -10,7 +10,7 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. تنزيل الكود
+      # 1. تنزيل الكود مع الفروع الفرعية
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
@@ -33,42 +33,37 @@ jobs:
       - name: Install Crypto Library
         run: pip install cryptography
 
-      # 3. ضبط إصدار NDK تلقائياً في ملف build.gradle
-      - name: Configure Android NDK Version
-        run: |
-          NDK_VER=$(ls -1$ANDROID_HOME/ndk 2>/dev/null | sort -V | tail -n 1)
-          if [ -n "$NDK_VER" ]; then
-            echo "Found installed NDK: $NDK_VER"
-            sed -i "/compileSdk/a \    ndkVersion '$NDK_VER'" app/build.gradle || true
-            echo "Injected ndkVersion into app/build.gradle"
-          fi
-
-      # 4. توفير ملف dobby.h لكود C++
-      - name: Ensure Dobby C++ Headers Exist
+      # 3. توفير ملف dobby.h الكامل مع DobbyHook و dobby_dummy_func_t
+      - name: Fix Dobby C++ Headers
         run: |
           DOBBY_INC="app/src/main/cpp/third_party/Dobby/include"
           mkdir -p "$DOBBY_INC"
           mkdir -p "app/src/main/cpp"
-          
+
           cat << 'EOF' > "$DOBBY_INC/dobby.h"
           #pragma once
+          #include <stdint.h>
+          #include <stddef.h>
           #include <dlfcn.h>
+
+          typedef void *dobby_dummy_func_t;
+
           #ifdef __cplusplus
           extern "C" {
           #endif
-          static inline void* DobbySymbolResolver(const char* image_name, const char* symbol_name) {
-              void* handle = dlopen(image_name, RTLD_LAZY);
-              if (!handle) return nullptr;
-              return dlsym(handle, symbol_name);
-          }
+
+          int DobbyHook(void *function_address, dobby_dummy_func_t replace_func, dobby_dummy_func_t *origin_func);
+          void *DobbySymbolResolver(const char *image_name, const char *symbol_name);
+
           #ifdef __cplusplus
           }
           #endif
           EOF
-          cp "$DOBBY_INC/dobby.h" "app/src/main/cpp/dobby.h"
-          echo "dobby.h ready."
 
-      # 5. توليد مفاتيح التشفير RSA-2048
+          cp "$DOBBY_INC/dobby.h" "app/src/main/cpp/dobby.h"
+          echo "Complete dobby.h header configured."
+
+      # 4. توليد مفاتيح التشفير RSA-2048
       - name: Generate Cryptographic Keys
         run: |
           mkdir -p keys_output
@@ -98,7 +93,7 @@ jobs:
           "
           echo "PUB_KEY=$(cat keys_output/public_key_clean.txt)" >> $GITHUB_ENV
 
-      # 6. حقن ملف LicenseManager (Java) النظيف
+      # 5. حقن كود فحص الترخيص LicenseManager (Java)
       - name: Inject LicenseManager (Java)
         run: |
           python3 -c "
@@ -147,6 +142,10 @@ jobs:
                   public String expiresAt = \"\";
                   public String tier = \"\";
                   public String errorMessage = null;
+
+                  public LicenseInfo(boolean isValid) {{
+                      this.isValid = isValid;
+                  }}
 
                   public LicenseInfo(boolean isValid, String errorMessage) {{
                       this.isValid = isValid;
@@ -236,7 +235,7 @@ jobs:
           print('LicenseManager.java ready.')
           "
 
-      # 7. قواعد ProGuard وتجاهل تحذيرات Xposed
+      # 6. قواعد ProGuard واستثناء تحذيرات Xposed
       - name: Configure ProGuard Rules
         run: |
           mkdir -p app
@@ -249,7 +248,7 @@ jobs:
           }
           EOF
 
-      # 8. توليد شهادة التوقيع الرقمي (Keystore)
+      # 7. توليد شهادة التوقيع (Keystore)
       - name: Create Release Keystore
         run: |
           keytool -genkeypair -v \
@@ -262,21 +261,13 @@ jobs:
             -keypass "pass123456" \
             -dname "CN=AndroidApp, O=Security, C=US"
 
-      # 9. بناء التطبيق مع التقاط الأخطاء وعرضها في الملخص
+      # 8. بناء التطبيق وتجميع الـ APK
       - name: Build Protected Release APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease -x lint -x lintVitalRelease -x test --stacktrace --no-daemon 2>&1 | tee build_log.txt
-          GRADLE_EXIT=${PIPESTATUS[0]}
-          if [ $GRADLE_EXIT -ne 0 ]; then
-            echo "### ❌ سبب الخطأ المباشر في البناء:" >> $GITHUB_STEP_SUMMARY
-            echo '```text' >> $GITHUB_STEP_SUMMARY
-            grep -B 2 -A 35 "FAILURE:" build_log.txt >> $GITHUB_STEP_SUMMARY \vert{}\vert{} tail -n 50 build_log.txt >>$GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            exit $GRADLE_EXIT
-          fi
+          ./gradlew assembleRelease -x lint -x lintVitalRelease -x test --stacktrace --no-daemon
 
-      # 10. توقيع الـ APK ومحاذاته
+      # 9. توقيع الـ APK ومحاذاته
       - name: Sign & Align Final APK
         run: |
           APKSIGNER=$(find $ANDROID_HOME/build-tools -name apksigner | sort -V | tail -n 1)
@@ -292,14 +283,14 @@ jobs:
           $ZIPALIGN -v -p 4 "$RAW_APK" final_output/app-aligned.apk || cp "$RAW_APK" final_output/app-aligned.apk
           $APKSIGNER sign --ks release.keystore --ks-pass pass:pass123456 --key-pass pass:pass123456 --out final_output/app-release-protected.apk final_output/app-aligned.apk
 
-      # 11. رفع ملف الـ APK النهائي الجاهز
+      # 10. رفع ملف التطبيق المشفر النهائي
       - name: Upload Final Protected APK
         uses: actions/upload-artifact@v4
         with:
           name: Protected-Release-APK
           path: final_output/app-release-protected.apk
 
-      # 12. رفع المفتاح السري الخاص بالمطور
+      # 11. رفع المفتاح الخاص للمطور
       - name: Upload Developer Private Key
         uses: actions/upload-artifact@v4
         with:
