@@ -10,14 +10,14 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. تنزيل الكود مع الفروع الفرعية
+      # 1. تنزيل الكود
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
           submodules: recursive
           fetch-depth: 0
 
-      # 2. استرجاع وتحديث مكتبة Dobby الأصلية النظيفة
+      # 2. استرجاع مكتبة Dobby الأصلية
       - name: Restore Clean Official Dobby Submodule
         run: |
           git submodule sync --recursive
@@ -26,14 +26,14 @@ jobs:
           git submodule foreach --recursive git clean -fdx
           echo "Dobby official source restored cleanly."
 
-      # 3. استبدال سيرفرات علي بابا الصينية بمستودعات Google و Maven الرسمية
+      # 3. استبدال سيرفرات علي بابا بمستودعات Google و Maven الرسمية
       - name: Replace Aliyun Mirrors with Official Repositories
         run: |
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/public|https://repo1.maven.org/maven2|g' {} +
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/jcenter|https://repo1.maven.org/maven2|g' {} +
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
-          echo "Replaced all Aliyun mirrors with official Google & Maven Central repositories."
+          echo "Official repositories configured."
 
       # 4. إعداد بيئة جافا وبايثون
       - name: Setup Java JDK 17
@@ -81,8 +81,8 @@ jobs:
           "
           echo "PUB_KEY=$(cat keys_output/public_key_clean.txt)" >> $GITHUB_ENV
 
-      # 6. حقن ملف LicenseManager (Java)
-      - name: Inject LicenseManager (Java)
+      # 6. حقن محرك التراخيص وشاشة التفعيل وقفل الـ Hook
+      - name: Inject Dual-Layer Licensing & Activation Screen
         run: |
           python3 -c "
           import os
@@ -103,13 +103,20 @@ jobs:
           if os.path.exists(old_kt):
               os.remove(old_kt)
 
-          java_code = f'''package {pkg};
+          # 1. كود LicenseManager.java الشامل
+          license_manager_code = f'''package {pkg};
 
           import android.content.Context;
           import android.os.Build;
+          import android.os.Environment;
           import android.provider.Settings;
           import android.util.Base64;
           import org.json.JSONObject;
+
+          import java.io.BufferedReader;
+          import java.io.File;
+          import java.io.FileReader;
+          import java.io.FileWriter;
           import java.security.KeyFactory;
           import java.security.MessageDigest;
           import java.security.PublicKey;
@@ -151,7 +158,10 @@ jobs:
 
               public static String getDeviceHWID(Context context) {{
                   try {{
-                      String androidId = Settings.Secure.getString(context.getContentResolver(), Settings.Secure.ANDROID_ID);
+                      String androidId = \"\";
+                      if (context != null) {{
+                          androidId = Settings.Secure.getString(context.getContentResolver(), Settings.Secure.ANDROID_ID);
+                      }}
                       if (androidId == null) androidId = \"\";
                       String raw = androidId + Build.BOARD + Build.BRAND + Build.DEVICE + Build.HARDWARE + Build.MANUFACTURER + Build.MODEL;
                       MessageDigest digest = MessageDigest.getInstance(\"SHA-256\");
@@ -166,6 +176,10 @@ jobs:
                   }} catch (Exception e) {{
                       return \"UNKNOWN_HWID\";
                   }}
+              }}
+
+              public static String getDeviceHWID() {{
+                  return getDeviceHWID(null);
               }}
 
               public static LicenseInfo verifyLicense(Context context, String licenseKey) {{
@@ -203,7 +217,8 @@ jobs:
                       String exp = json.optString(\"expires_at\", \"\");
                       String tier = json.optString(\"tier\", \"VIP\");
 
-                      if (!licHwid.equalsIgnoreCase(getDeviceHWID(context))) {{
+                      String currentHwid = getDeviceHWID(context);
+                      if (!licHwid.equalsIgnoreCase(currentHwid)) {{
                           return new LicenseInfo(false, \"المفتاح غير مخصص لهذا الجهاز\");
                       }}
 
@@ -220,11 +235,232 @@ jobs:
                       return new LicenseInfo(false, e.getMessage());
                   }}
               }}
+
+              public static LicenseInfo verifyAndSave(Context context, String licenseKey) {{
+                  LicenseInfo result = verifyLicense(context, licenseKey);
+                  if (result.isValid) {{
+                      saveLicenseKey(context, licenseKey.trim());
+                  }}
+                  return result;
+              }}
+
+              public static void saveLicenseKey(Context context, String licenseKey) {{
+                  try {{
+                      File dir = new File(Environment.getExternalStorageDirectory(), \"CamSwap\");
+                      if (!dir.exists()) dir.mkdirs();
+                      File licFile = new File(dir, \"license.key\");
+                      FileWriter writer = new FileWriter(licFile);
+                      writer.write(licenseKey);
+                      writer.flush();
+                      writer.close();
+                  }} catch (Exception ignored) {{}}
+
+                  if (context != null) {{
+                      try {{
+                          context.getSharedPreferences(\"camswap_sec_lic\", Context.MODE_PRIVATE)
+                                  .edit().putString(\"key_data\", licenseKey).apply();
+                      }} catch (Exception ignored) {{}}
+                  }}
+              }}
+
+              public static String readSavedKey(Context context) {{
+                  try {{
+                      File licFile = new File(Environment.getExternalStorageDirectory(), \"CamSwap/license.key\");
+                      if (licFile.exists()) {{
+                          BufferedReader br = new BufferedReader(new FileReader(licFile));
+                          String line = br.readLine();
+                          br.close();
+                          if (line != null && !line.trim().isEmpty()) {{
+                              return line.trim();
+                          }}
+                      }}
+                  }} catch (Exception ignored) {{}}
+
+                  if (context != null) {{
+                      try {{
+                          return context.getSharedPreferences(\"camswap_sec_lic\", Context.MODE_PRIVATE)
+                                  .getString(\"key_data\", \"\");
+                      }} catch (Exception ignored) {{}}
+                  }}
+                  return \"\";
+              }}
+
+              public static LicenseInfo checkSavedLicense(Context context) {{
+                  String saved = readSavedKey(context);
+                  return verifyLicense(context, saved);
+              }}
+
+              public static boolean isSystemLicensed() {{
+                  LicenseInfo info = checkSavedLicense(null);
+                  return info.isValid;
+              }}
           }}
           '''
           with open(os.path.join(target_dir, 'LicenseManager.java'), 'w') as f:
-              f.write(java_code)
-          print('LicenseManager.java injected cleanly.')
+              f.write(license_manager_code)
+
+          # 2. إنشاء شاشة التفعيل الرسمية ActivationActivity.java
+          activation_activity_code = f'''package {pkg};
+
+          import android.app.Activity;
+          import android.content.ClipData;
+          import android.content.ClipboardManager;
+          import android.content.Context;
+          import android.graphics.Color;
+          import android.os.Bundle;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.widget.Button;
+          import android.widget.EditText;
+          import android.widget.LinearLayout;
+          import android.widget.ScrollView;
+          import android.widget.TextView;
+          import android.widget.Toast;
+
+          public class ActivationActivity extends Activity {{
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {{
+                  super.onCreate(savedInstanceState);
+
+                  ScrollView scrollView = new ScrollView(this);
+                  scrollView.setFillViewport(true);
+                  scrollView.setBackgroundColor(Color.parseColor(\"#121212\"));
+
+                  LinearLayout layout = new LinearLayout(this);
+                  layout.setOrientation(LinearLayout.VERTICAL);
+                  layout.setPadding(48, 80, 48, 80);
+                  layout.setGravity(Gravity.CENTER_HORIZONTAL);
+
+                  TextView titleText = new TextView(this);
+                  titleText.setText(\"تفعيل ترخيص CamSwap PRO\");
+                  titleText.setTextSize(22);
+                  titleText.setTextColor(Color.WHITE);
+                  titleText.setGravity(Gravity.CENTER);
+                  titleText.setPadding(0, 0, 0, 30);
+                  layout.addView(titleText);
+
+                  final String hwid = LicenseManager.getDeviceHWID(this);
+                  TextView hwidLabel = new TextView(this);
+                  hwidLabel.setText(\"معرّف جهازك الخاص (Hardware ID):\");
+                  hwidLabel.setTextSize(14);
+                  hwidLabel.setTextColor(Color.parseColor(\"#AAAAAA\"));
+                  layout.addView(hwidLabel);
+
+                  final TextView hwidValue = new TextView(this);
+                  hwidValue.setText(hwid);
+                  hwidValue.setTextSize(18);
+                  hwidValue.setTextColor(Color.parseColor(\"#00E676\"));
+                  hwidValue.setPadding(0, 10, 0, 20);
+                  layout.addView(hwidValue);
+
+                  Button copyBtn = new Button(this);
+                  copyBtn.setText(\"نسخ المعرّف (Copy HWID)\");
+                  copyBtn.setBackgroundColor(Color.parseColor(\"#1E88E5\"));
+                  copyBtn.setTextColor(Color.WHITE);
+                  copyBtn.setOnClickListener(new View.OnClickListener() {{
+                      @Override
+                      public void onClick(View v) {{
+                          ClipboardManager clipboard = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                          ClipData clip = ClipData.newPlainText(\"HWID\", hwid);
+                          if (clipboard != null) {{
+                              clipboard.setPrimaryClip(clip);
+                              Toast.makeText(ActivationActivity.this, \"تم نسخ معرّف الجهاز إلى الحافظة!\", Toast.LENGTH_SHORT).show();
+                          }}
+                      }}
+                  }});
+                  layout.addView(copyBtn);
+
+                  TextView keyLabel = new TextView(this);
+                  keyLabel.setText(\"\\nأدخل مفتاح الترخيص هنا:\");
+                  keyLabel.setTextSize(14);
+                  keyLabel.setTextColor(Color.parseColor(\"#AAAAAA\"));
+                  layout.addView(keyLabel);
+
+                  final EditText keyInput = new EditText(this);
+                  keyInput.setHint(\"ألصق المفتاح الكامل هنا...\");
+                  keyInput.setHintTextColor(Color.GRAY);
+                  keyInput.setTextColor(Color.WHITE);
+                  keyInput.setBackgroundColor(Color.parseColor(\"#2C2C2C\"));
+                  keyInput.setPadding(24, 24, 24, 24);
+                  layout.addView(keyInput);
+
+                  Button activateBtn = new Button(this);
+                  activateBtn.setText(\"تفعيل الآن (Activate)\");
+                  activateBtn.setBackgroundColor(Color.parseColor(\"#00C853\"));
+                  activateBtn.setTextColor(Color.WHITE);
+
+                  final TextView statusText = new TextView(this);
+                  statusText.setTextSize(15);
+                  statusText.setGravity(Gravity.CENTER);
+                  statusText.setPadding(0, 30, 0, 0);
+
+                  activateBtn.setOnClickListener(new View.OnClickListener() {{
+                      @Override
+                      public void onClick(View v) {{
+                          String input = keyInput.getText().toString().trim();
+                          LicenseManager.LicenseInfo result = LicenseManager.verifyAndSave(ActivationActivity.this, input);
+                          if (result.isValid) {{
+                              statusText.setTextColor(Color.parseColor(\"#00E676\"));
+                              statusText.setText(\"✓ تم التفعيل بنجاح!\\nالمالك: \" + result.owner + \"\\nالباقة: \" + result.tier + \"\\nالصلاحية: \" + result.expiresAt);
+                              Toast.makeText(ActivationActivity.this, \"تم تفعيل الترخيص بنجاح!\", Toast.LENGTH_LONG).show();
+                          }} else {{
+                              statusText.setTextColor(Color.parseColor(\"#FF5252\"));
+                              statusText.setText(\"✗ فشل التفعيل:\\n\" + result.errorMessage);
+                          }}
+                      }}
+                  }});
+                  layout.addView(activateBtn);
+                  layout.addView(statusText);
+
+                  LicenseManager.LicenseInfo current = LicenseManager.checkSavedLicense(this);
+                  if (current.isValid) {{
+                      statusText.setTextColor(Color.parseColor(\"#00E676\"));
+                      statusText.setText(\"✓ التطبيق مرخص ومفعل بالفعل\\nالمالك: \" + current.owner + \"\\nالباقة: \" + current.tier + \"\\nالصلاحية: \" + current.expiresAt);
+                  }}
+
+                  scrollView.addView(layout);
+                  setContentView(scrollView);
+              }}
+          }}
+          '''
+          with open(os.path.join(target_dir, 'ActivationActivity.java'), 'w') as f:
+              f.write(activation_activity_code)
+
+          # 3. حقن شاشة التفعيل في AndroidManifest.xml لتظهر كأيقونة تشغيل
+          manifest_path = 'app/src/main/AndroidManifest.xml'
+          if os.path.exists(manifest_path):
+              with open(manifest_path, 'r') as f:
+                  m_content = f.read()
+              if 'ActivationActivity' not in m_content:
+                  act_decl = f'''
+                  <activity
+                      android:name=\"{pkg}.ActivationActivity\"
+                      android:exported=\"true\"
+                      android:label=\"CamSwap PRO License\">
+                      <intent-filter>
+                          <action android:name=\"android.intent.action.MAIN\" />
+                          <category android:name=\"android.intent.category.LAUNCHER\" />
+                      </intent-filter>
+                  </activity>
+                  '''
+                  m_content = m_content.replace('</application>', act_decl + '\n    </application>')
+                  with open(manifest_path, 'w') as f:
+                      f.write(m_content)
+                  print('ActivationActivity registered in AndroidManifest.xml')
+
+          # 4. قفل كود HookMain.java الداخلي لتعطيل الموديل ما لم يوجد ترخيص صالح
+          hook_path = os.path.join(target_dir, 'HookMain.java')
+          if os.path.exists(hook_path):
+              with open(hook_path, 'r') as f:
+                  h_content = f.read()
+              if 'isSystemLicensed' not in h_content:
+                  h_content = h_content.replace(
+                      'if (lpparam.packageName.equals(MODULE_PACKAGE)) {\n            return;\n        }',
+                      'if (lpparam.packageName.equals(MODULE_PACKAGE)) {\n            return;\n        }\n\n        // قفل أمني: إيقاف الموديل تماماً إذا لم يكن الترخيص صالحاً ومطابقاً للجهاز\n        if (!LicenseManager.isSystemLicensed()) {\n            return;\n        }'
+                  )
+                  with open(hook_path, 'w') as f:
+                      f.write(h_content)
+                  print('HookMain.java locked with LicenseManager enforcement.')
           "
 
       # 7. قواعد ProGuard وتجاهل تحذيرات Xposed
@@ -238,9 +474,11 @@ jobs:
           -keepclasseswithmembernames class * {
               native <methods>;
           }
+          -keep class io.github.zensu357.camswap.ActivationActivity { *; }
+          -keep class io.github.zensu357.camswap.LicenseManager { *; }
           EOF
 
-      # 8. توليد شهادة التوقيع الرقمي وإعداد Gradle ليوقع تلقائياً
+      # 8. توليد شهادة التوقيع وإعداد Gradle ليوقع التطبيق تلقائياً
       - name: Configure Automatic Release Signing in Gradle
         run: |
           mkdir -p app
@@ -273,11 +511,11 @@ jobs:
               content = content.replace('release {', 'release {\n            signingConfig signingConfigs.release')
               with open('app/build.gradle', 'w') as f:
                   f.write(content)
-              print('Gradle release signing configured automatically.')
+              print('Gradle release signing configured.')
           "
 
-      # 9. تجميع وتوقيع الـ APK تلقائياً بواسطة Gradle
-      - name: Build Protected Signed Release APK
+      # 9. بناء وتجميع الـ APK الموقع
+      - name: Build Protected Release APK
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease -x lint -x lintVitalRelease -x test --stacktrace --no-daemon 2>&1 | tee build_log.txt
@@ -290,7 +528,7 @@ jobs:
             exit $EXIT_CODE
           fi
 
-      # 10. رفع ملفات الـ APK الموقعة الجاهزة فوراً
+      # 10. رفع ملفات الـ APK الموقعة الجاهزة للتثبيت
       - name: Upload Final Protected APK
         uses: actions/upload-artifact@v4
         with:
