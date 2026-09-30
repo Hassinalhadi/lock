@@ -26,20 +26,28 @@ jobs:
         with:
           python-version: '3.11'
 
-      # 4. إعداد هيكل مشروع تطبيق المولد
+      # 4. استبدال سيرفرات علي بابا بالمستودعات الرسمية
+      - name: Replace Aliyun Mirrors with Official Repositories
+        run: |
+          find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
+          find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/public|https://repo1.maven.org/maven2|g' {} +
+          find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/jcenter|https://repo1.maven.org/maven2|g' {} +
+          find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
+          echo "Official repositories configured."
+
+      # 5. إعداد هيكل مشروع تطبيق المولد المستقل
       - name: Configure KeyGen Application Project
         run: |
-          rm -rf app/src/main/java/*
-          rm -rf app/src/main/res/layout/*
-          rm -rf app/src/main/res/drawable/*
-          rm -rf app/src/main/res/values*/*
+          rm -rf app/src/main/java
+          rm -rf app/src/main/res
           rm -rf app/src/main/cpp
           rm -rf app/src/main/resources
+          rm -rf app/build
 
           mkdir -p app/src/main/java/sa/riyadh/keygen
           mkdir -p app/src/main/res/values
 
-          # ملف AndroidManifest.xml
+          # ملف AndroidManifest.xml نظيف
           cat << 'PYEOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -47,8 +55,8 @@ jobs:
 
               <application
                   android:allowBackup="true"
-                  android:icon="@android:drawable/ic_dialog_info"
-                  android:label="مولد RiyadhRiders"
+                  android:label="@string/app_name"
+                  android:supportsRtl="true"
                   android:theme="@android:style/Theme.DeviceDefault">
                   <activity
                       android:name=".MainActivity"
@@ -108,9 +116,6 @@ jobs:
                   targetCompatibility JavaVersion.VERSION_17
               }
           }
-
-          dependencies {
-          }
           PYEOF
 
           # توليد شهادة التوقيع الرسمية
@@ -124,7 +129,7 @@ jobs:
             -keypass "pass123456" \
             -dname "CN=KeyGen, O=RiyadhRiders, C=SA"
 
-      # 5. كتابة كود تطبيق المولد كاملاً (مع التقويم، حفظ الأجهزة، وإلغاء التفعيل)
+      # 6. كتابة كود تطبيق المولد كاملاً (مع التقويم، وحفظ الأجهزة، وإلغاء التفعيل)
       - name: Write KeyGen MainActivity
         run: |
           cat << 'PYEOF' > app/src/main/java/sa/riyadh/keygen/MainActivity.java.raw
@@ -554,15 +559,24 @@ jobs:
           PYEOF
           python3 -c "import textwrap; open('app/src/main/java/sa/riyadh/keygen/MainActivity.java', 'w').write(textwrap.dedent(open('app/src/main/java/sa/riyadh/keygen/MainActivity.java.raw').read()))"
 
-      # 6. تجميع وبناء تطبيق المولد APK
+      # 7. تجميع وبناء تطبيق المولد APK
       - name: Build KeyGen Release APK
         run: |
           chmod +x gradlew
-          ./gradlew :app:assembleRelease --no-daemon 2>&1 | tee keygen_build.log
+          ./gradlew assembleRelease -x lint -x test --stacktrace --no-daemon 2>&1 | tee keygen_build.log
+          EXIT_CODE=${PIPESTATUS[0]}
+          if [ $EXIT_CODE -ne 0 ]; then
+            echo "## ❌ تفاصيل خطأ بناء المولد:" >> $GITHUB_STEP_SUMMARY
+            echo '```text' >> $GITHUB_STEP_SUMMARY
+            grep -B 2 -A 50 "FAILURE:" keygen_build.log >> $GITHUB_STEP_SUMMARY || tail -n 60 keygen_build.log >>$GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
+            exit $EXIT_CODE
+          fi
 
-      # 7. رفع ملف الـ APK إلى قسم Artifacts
+      # 8. رفع ملف الـ APK إلى قسم Artifacts
       - name: Upload KeyGen APK
         uses: actions/upload-artifact@v4
         with:
           name: RiyadhRiders-KeyGen-APK
-          path: app/build/outputs/apk/release/*.apk
+          path: app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
