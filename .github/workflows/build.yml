@@ -47,7 +47,7 @@ jobs:
           mkdir -p app/src/main/java/sa/riyadh/keygen
           mkdir -p app/src/main/res/values
 
-          # ملف AndroidManifest.xml نظيف
+          # ملف AndroidManifest.xml بالإنجليزية
           cat << 'PYEOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -56,7 +56,7 @@ jobs:
               <application
                   android:allowBackup="true"
                   android:label="@string/app_name"
-                  android:supportsRtl="true"
+                  android:supportsRtl="false"
                   android:theme="@android:style/Theme.DeviceDefault">
                   <activity
                       android:name=".MainActivity"
@@ -74,7 +74,7 @@ jobs:
           # ملف strings.xml
           cat << 'PYEOF' > app/src/main/res/values/strings.xml
           <resources>
-              <string name="app_name">مولد RiyadhRiders</string>
+              <string name="app_name">RiyadhRiders KeyGen PRO</string>
           </resources>
           PYEOF
 
@@ -129,7 +129,7 @@ jobs:
             -keypass "pass123456" \
             -dname "CN=KeyGen, O=RiyadhRiders, C=SA"
 
-      # 6. كتابة كود تطبيق المولد كاملاً (مع التقويم، وحفظ الأجهزة، وإلغاء التفعيل)
+      # 6. كتابة كود تطبيق المولد كاملاً باللغة الإنجليزية
       - name: Write KeyGen MainActivity
         run: |
           cat << 'PYEOF' > app/src/main/java/sa/riyadh/keygen/MainActivity.java.raw
@@ -181,7 +181,7 @@ jobs:
                   root.setPadding(40, 50, 40, 60);
 
                   TextView title = new TextView(this);
-                  title.setText("مولد مفاتيح RiyadhRiders");
+                  title.setText("RiyadhRiders KeyGen PRO");
                   title.setTextSize(22);
                   title.setTextColor(Color.parseColor("#00E676"));
                   title.setGravity(Gravity.CENTER);
@@ -194,39 +194,39 @@ jobs:
                   updateKeyStatus();
 
                   Button btnSetKey = new Button(this);
-                  btnSetKey.setText("🔑 إعداد المفتاح الخاص (Private Key)");
+                  btnSetKey.setText("🔑 Configure Private Key (private_key.pem)");
                   btnSetKey.setBackgroundColor(Color.parseColor("#37474F"));
                   btnSetKey.setTextColor(Color.WHITE);
                   btnSetKey.setOnClickListener(v -> showSetKeyDialog());
                   root.addView(btnSetKey);
 
-                  root.addView(createLabel("معرف جهاز العميل (HWID):"));
+                  root.addView(createLabel("Client Hardware ID (HWID):"));
                   etHwid = new EditText(this);
-                  etHwid.setHint("ألصق HWID هنا...");
+                  etHwid.setHint("Paste client HWID here...");
                   etHwid.setHintTextColor(Color.GRAY);
                   etHwid.setTextColor(Color.WHITE);
                   etHwid.setBackgroundColor(Color.parseColor("#222222"));
                   etHwid.setPadding(24, 24, 24, 24);
                   root.addView(etHwid);
 
-                  root.addView(createLabel("اسم العميل أو الحساب:"));
+                  root.addView(createLabel("Client Name / Note:"));
                   etOwner = new EditText(this);
-                  etOwner.setHint("اسم الزبون...");
+                  etOwner.setHint("e.g. VIP Customer / John...");
                   etOwner.setHintTextColor(Color.GRAY);
                   etOwner.setTextColor(Color.WHITE);
                   etOwner.setBackgroundColor(Color.parseColor("#222222"));
                   etOwner.setPadding(24, 24, 24, 24);
                   root.addView(etOwner);
 
-                  root.addView(createLabel("نوع الباقة (Tier):"));
+                  root.addView(createLabel("License Tier:"));
                   spTier = new Spinner(this);
                   ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, new String[]{"VIP", "PRO", "ULTIMATE"});
                   spTier.setAdapter(adapter);
                   root.addView(spTier);
 
-                  root.addView(createLabel("مدة الصلاحية:"));
+                  root.addView(createLabel("Validity Period:"));
                   tvSelectedDate = new TextView(this);
-                  tvSelectedDate.setText("الصلاحية: دائم مدى الحياة (LIFETIME)");
+                  tvSelectedDate.setText("Expiry: Lifetime Access (LIFETIME)");
                   tvSelectedDate.setTextColor(Color.parseColor("#00E676"));
                   tvSelectedDate.setTextSize(15);
                   tvSelectedDate.setPadding(0, 10, 0, 15);
@@ -234,16 +234,16 @@ jobs:
 
                   LinearLayout dateBtns1 = new LinearLayout(this);
                   dateBtns1.setOrientation(LinearLayout.HORIZONTAL);
-                  addQuickDateBtn(dateBtns1, "شهر", 30);
-                  addQuickDateBtn(dateBtns1, "3 أشهر", 90);
-                  addQuickDateBtn(dateBtns1, "سنة", 365);
+                  addQuickDateBtn(dateBtns1, "1 Month", 30);
+                  addQuickDateBtn(dateBtns1, "3 Months", 90);
+                  addQuickDateBtn(dateBtns1, "1 Year", 365);
                   root.addView(dateBtns1);
 
                   LinearLayout dateBtns2 = new LinearLayout(this);
                   dateBtns2.setOrientation(LinearLayout.HORIZONTAL);
 
                   Button btnCalendar = new Button(this);
-                  btnCalendar.setText("📅 تقويم مخصص");
+                  btnCalendar.setText("📅 Custom Calendar");
                   btnCalendar.setBackgroundColor(Color.parseColor("#1E88E5"));
                   btnCalendar.setTextColor(Color.WHITE);
                   btnCalendar.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
@@ -251,19 +251,19 @@ jobs:
                   dateBtns2.addView(btnCalendar);
 
                   Button btnLifetime = new Button(this);
-                  btnLifetime.setText("♾️ مدى الحياة");
+                  btnLifetime.setText("♾️ Lifetime");
                   btnLifetime.setBackgroundColor(Color.parseColor("#424242"));
                   btnLifetime.setTextColor(Color.WHITE);
                   btnLifetime.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
                   btnLifetime.setOnClickListener(v -> {
                       selectedExpiry = "LIFETIME";
-                      tvSelectedDate.setText("الصلاحية: دائم مدى الحياة (LIFETIME)");
+                      tvSelectedDate.setText("Expiry: Lifetime Access (LIFETIME)");
                   });
                   dateBtns2.addView(btnLifetime);
                   root.addView(dateBtns2);
 
                   Button btnGen = new Button(this);
-                  btnGen.setText("⚡ توليد مفتاح الترخيص وحفظ الجهاز");
+                  btnGen.setText("⚡ Generate License & Save Device");
                   btnGen.setBackgroundColor(Color.parseColor("#00C853"));
                   btnGen.setTextColor(Color.WHITE);
                   btnGen.setTextSize(16);
@@ -274,7 +274,7 @@ jobs:
                   btnGen.setOnClickListener(v -> generateAndSaveKey());
                   root.addView(btnGen);
 
-                  root.addView(createLabel("المفتاح الناتج:"));
+                  root.addView(createLabel("Generated License Key:"));
                   tvResultKey = new TextView(this);
                   tvResultKey.setTextIsSelectable(true);
                   tvResultKey.setTextColor(Color.WHITE);
@@ -286,7 +286,7 @@ jobs:
                   actionBtns.setOrientation(LinearLayout.HORIZONTAL);
 
                   Button btnCopy = new Button(this);
-                  btnCopy.setText("📋 نسخ");
+                  btnCopy.setText("📋 Copy");
                   btnCopy.setBackgroundColor(Color.parseColor("#1976D2"));
                   btnCopy.setTextColor(Color.WHITE);
                   btnCopy.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
@@ -295,13 +295,13 @@ jobs:
                       if (!k.isEmpty()) {
                           ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
                           cm.setPrimaryClip(ClipData.newPlainText("License", k));
-                          Toast.makeText(this, "تم نسخ المفتاح!", Toast.LENGTH_SHORT).show();
+                          Toast.makeText(this, "License key copied to clipboard!", Toast.LENGTH_SHORT).show();
                       }
                   });
                   actionBtns.addView(btnCopy);
 
                   Button btnWa = new Button(this);
-                  btnWa.setText("💬 واتساب");
+                  btnWa.setText("💬 WhatsApp");
                   btnWa.setBackgroundColor(Color.parseColor("#25D366"));
                   btnWa.setTextColor(Color.WHITE);
                   btnWa.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
@@ -309,7 +309,7 @@ jobs:
                   actionBtns.addView(btnWa);
 
                   Button btnTg = new Button(this);
-                  btnTg.setText("✈️ تليجرام");
+                  btnTg.setText("✈️ Telegram");
                   btnTg.setBackgroundColor(Color.parseColor("#0088CC"));
                   btnTg.setTextColor(Color.WHITE);
                   btnTg.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
@@ -318,7 +318,7 @@ jobs:
                   root.addView(actionBtns);
 
                   TextView historyHeader = new TextView(this);
-                  historyHeader.setText("📋 سجل الأجهزة المصدرة:");
+                  historyHeader.setText("📋 Registered Devices & Issued Keys:");
                   historyHeader.setTextSize(18);
                   historyHeader.setTextColor(Color.WHITE);
                   historyHeader.setPadding(0, 40, 0, 16);
@@ -344,7 +344,7 @@ jobs:
                       Calendar c = Calendar.getInstance();
                       c.add(Calendar.DAY_OF_YEAR, days);
                       selectedExpiry = String.format(Locale.US, "%04d-%02d-%02d", c.get(Calendar.YEAR), c.get(Calendar.MONTH) + 1, c.get(Calendar.DAY_OF_MONTH));
-                      tvSelectedDate.setText("الصلاحية (" + title + "): " + selectedExpiry);
+                      tvSelectedDate.setText("Expiry (" + title + "): " + selectedExpiry);
                   });
                   parent.addView(btn);
               }
@@ -361,31 +361,31 @@ jobs:
                   SharedPreferences prefs = getSharedPreferences("keygen_cfg", MODE_PRIVATE);
                   String savedKey = prefs.getString("priv_key", "");
                   if (!savedKey.isEmpty()) {
-                      tvKeyStatus.setText("🟢 المفتاح الخاص جاهز للعمل");
+                      tvKeyStatus.setText("🟢 Private Key Ready & Loaded");
                       tvKeyStatus.setTextColor(Color.parseColor("#00E676"));
                   } else {
-                      tvKeyStatus.setText("🔴 يرجى إدخال المفتاح الخاص (Private Key) أولاً");
+                      tvKeyStatus.setText("🔴 Private Key Not Set (Click button below)");
                       tvKeyStatus.setTextColor(Color.parseColor("#FF5252"));
                   }
               }
 
               private void showSetKeyDialog() {
                   AlertDialog.Builder builder = new AlertDialog.Builder(this);
-                  builder.setTitle("إعداد المفتاح الخاص (private_key.pem)");
+                  builder.setTitle("Configure Private Key (private_key.pem)");
 
                   final EditText input = new EditText(this);
-                  input.setHint("ألصق محتوى private_key.pem كاملاً هنا...");
+                  input.setHint("Paste the full private_key.pem content here...");
                   SharedPreferences prefs = getSharedPreferences("keygen_cfg", MODE_PRIVATE);
                   input.setText(prefs.getString("priv_key", ""));
                   builder.setView(input);
 
-                  builder.setPositiveButton("حفظ", (dialog, which) -> {
+                  builder.setPositiveButton("Save", (dialog, which) -> {
                       String val = input.getText().toString().trim();
                       prefs.edit().putString("priv_key", val).apply();
                       updateKeyStatus();
-                      Toast.makeText(this, "تم حفظ المفتاح بنجاح!", Toast.LENGTH_SHORT).show();
+                      Toast.makeText(this, "Private key saved successfully!", Toast.LENGTH_SHORT).show();
                   });
-                  builder.setNegativeButton("إلغاء", null);
+                  builder.setNegativeButton("Cancel", null);
                   builder.show();
               }
 
@@ -393,25 +393,25 @@ jobs:
                   Calendar c = Calendar.getInstance();
                   new DatePickerDialog(this, (view, year, month, dayOfMonth) -> {
                       selectedExpiry = String.format(Locale.US, "%04d-%02d-%02d", year, month + 1, dayOfMonth);
-                      tvSelectedDate.setText("تاريخ الانتهاء المختار: " + selectedExpiry);
+                      tvSelectedDate.setText("Selected Expiry Date: " + selectedExpiry);
                   }, c.get(Calendar.YEAR), c.get(Calendar.MONTH), c.get(Calendar.DAY_OF_MONTH)).show();
               }
 
               private void generateAndSaveKey() {
                   String hwid = etHwid.getText().toString().trim().toUpperCase();
                   String owner = etOwner.getText().toString().trim();
-                  if (owner.isEmpty()) owner = "زبون";
+                  if (owner.isEmpty()) owner = "Customer";
                   String tier = spTier.getSelectedItem().toString();
 
                   if (hwid.isEmpty()) {
-                      Toast.makeText(this, "يرجى كتابة HWID الخاص بجهاز الزبون!", Toast.LENGTH_SHORT).show();
+                      Toast.makeText(this, "Please enter customer HWID!", Toast.LENGTH_SHORT).show();
                       return;
                   }
 
                   SharedPreferences prefs = getSharedPreferences("keygen_cfg", MODE_PRIVATE);
                   String rawPem = prefs.getString("priv_key", "").trim();
                   if (rawPem.isEmpty()) {
-                      Toast.makeText(this, "يرجى إدخال المفتاح الخاص أولاً من زر الإعداد في الأعلى!", Toast.LENGTH_LONG).show();
+                      Toast.makeText(this, "Please configure private key first using the button above!", Toast.LENGTH_LONG).show();
                       showSetKeyDialog();
                       return;
                   }
@@ -446,9 +446,9 @@ jobs:
 
                       saveDeviceRecord(hwid, owner, tier, selectedExpiry, finalKey);
                       loadHistory();
-                      Toast.makeText(this, "تم توليد وحفظ الترخيص بنجاح!", Toast.LENGTH_SHORT).show();
+                      Toast.makeText(this, "License generated & device saved successfully!", Toast.LENGTH_SHORT).show();
                   } catch (Exception e) {
-                      Toast.makeText(this, "خطأ في التوليد: " + e.getMessage(), Toast.LENGTH_LONG).show();
+                      Toast.makeText(this, "Generation error: " + e.getMessage(), Toast.LENGTH_LONG).show();
                   }
               }
 
@@ -456,12 +456,12 @@ jobs:
                   String key = tvResultKey.getText().toString().trim();
                   if (key.isEmpty()) return;
                   try {
-                      String msg = "مفتاح التفعيل الخاص بك لتطبيق RiyadhRiders PRO:\n\n" + key + "\n\nألصق هذا المفتاح في التطبيق واضغط تفعيل.";
+                      String msg = "Your RiyadhRiders PRO Activation Key:\n\n" + key + "\n\nPaste this license key into the application and tap Activate.";
                       Intent intent = new Intent(Intent.ACTION_VIEW);
                       intent.setData(Uri.parse("https://api.whatsapp.com/send?text=" + URLEncoder.encode(msg, "UTF-8")));
                       startActivity(intent);
                   } catch (Exception e) {
-                      Toast.makeText(this, "تعذر فتح واتساب", Toast.LENGTH_SHORT).show();
+                      Toast.makeText(this, "Unable to launch WhatsApp", Toast.LENGTH_SHORT).show();
                   }
               }
 
@@ -472,13 +472,13 @@ jobs:
                       Intent intent = new Intent(Intent.ACTION_SEND);
                       intent.setType("text/plain");
                       intent.setPackage("org.telegram.messenger");
-                      intent.putExtra(Intent.EXTRA_TEXT, "مفتاح تفعيل RiyadhRiders:\n" + key);
+                      intent.putExtra(Intent.EXTRA_TEXT, "RiyadhRiders Activation Key:\n" + key);
                       startActivity(intent);
                   } catch (Exception e) {
                       Intent intent = new Intent(Intent.ACTION_SEND);
                       intent.setType("text/plain");
-                      intent.putExtra(Intent.EXTRA_TEXT, "مفتاح تفعيل RiyadhRiders:\n" + key);
-                      startActivity(Intent.createChooser(intent, "إرسال عبر:"));
+                      intent.putExtra(Intent.EXTRA_TEXT, "RiyadhRiders Activation Key:\n" + key);
+                      startActivity(Intent.createChooser(intent, "Share via:"));
                   }
               }
 
@@ -516,7 +516,7 @@ jobs:
 
                           boolean active = item.optBoolean("active", true);
                           TextView info = new TextView(this);
-                          info.setText(item.optString("owner") + " (" + item.optString("tier") + ")" + "\nHWID: " + item.optString("hwid") + "\nالصلاحية: " + item.optString("expiry") + "\nالحالة: " + (active ? "🟢 مفعل" : "🔴 ملغي"));
+                          info.setText(item.optString("owner") + " (" + item.optString("tier") + ")" + "\nHWID: " + item.optString("hwid") + "\nExpiry: " + item.optString("expiry") + "\nStatus: " + (active ? "🟢 Active" : "🔴 Revoked"));
                           info.setTextColor(active ? Color.WHITE : Color.parseColor("#FF5252"));
                           info.setTextSize(14);
                           card.addView(info);
@@ -526,17 +526,17 @@ jobs:
                           btns.setPadding(0, 12, 0, 0);
 
                           Button btnCopy = new Button(this);
-                          btnCopy.setText("نسخ");
+                          btnCopy.setText("Copy Key");
                           btnCopy.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
                           btnCopy.setOnClickListener(v -> {
                               ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
                               cm.setPrimaryClip(ClipData.newPlainText("Key", item.optString("key")));
-                              Toast.makeText(MainActivity.this, "تم نسخ المفتاح!", Toast.LENGTH_SHORT).show();
+                              Toast.makeText(MainActivity.this, "License key copied!", Toast.LENGTH_SHORT).show();
                           });
                           btns.addView(btnCopy);
 
                           Button btnRevoke = new Button(this);
-                          btnRevoke.setText(active ? "إلغاء التفعيل" : "إعادة التفعيل");
+                          btnRevoke.setText(active ? "Revoke Device" : "Reactivate");
                           btnRevoke.setBackgroundColor(active ? Color.parseColor("#C62828") : Color.parseColor("#2E7D32"));
                           btnRevoke.setTextColor(Color.WHITE);
                           btnRevoke.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
@@ -566,14 +566,14 @@ jobs:
           ./gradlew assembleRelease -x lint -x test --stacktrace --no-daemon 2>&1 | tee keygen_build.log
           EXIT_CODE=${PIPESTATUS[0]}
           if [ $EXIT_CODE -ne 0 ]; then
-            echo "## ❌ تفاصيل خطأ بناء المولد:" >> $GITHUB_STEP_SUMMARY
+            echo "## ❌ Build Failure Details:" >> $GITHUB_STEP_SUMMARY
             echo '```text' >> $GITHUB_STEP_SUMMARY
             grep -B 2 -A 50 "FAILURE:" keygen_build.log >> $GITHUB_STEP_SUMMARY || tail -n 60 keygen_build.log >>$GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             exit $EXIT_CODE
           fi
 
-      # 8. رفع ملف الـ APK إلى قسم Artifacts
+      # 8. رفع ملف الـ APK النهائي إلى قسم Artifacts
       - name: Upload KeyGen APK
         uses: actions/upload-artifact@v4
         with:
