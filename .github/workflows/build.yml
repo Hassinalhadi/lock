@@ -1,18 +1,23 @@
-name: Build Riders Soloution Pk KeyGen APK
+name: Build Riders Soloution Pk App
 
 on:
   workflow_dispatch:
+  push:
+    branches: [ main, master ]
 
 jobs:
-  build-keygen:
+  build-and-protect:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. تنزيل الكود
-      - name: Checkout Repository
+      # 1. تنزيل الكود المصدري
+      - name: Checkout Source Code
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
 
-      # 2. إعداد بيئة جافا
+      # 2. إعداد بيئة جافا وبايثون
       - name: Setup Java JDK 17
         uses: actions/setup-java@v4
         with:
@@ -20,105 +25,494 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      # 3. إعداد بيئة بايثون
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
-      # 4. استبدال سيرفرات علي بابا بالمستودعات الرسمية
-      - name: Replace Aliyun Mirrors with Official Repositories
+      - name: Install Python Libraries
+        run: pip install cryptography Pillow pyyaml
+
+      # 3. مزامنة الفروع الفرعية وتعديل المستودعات
+      - name: Sync Submodules & Clean Repositories
         run: |
-          find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
-          find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/public|https://repo1.maven.org/maven2|g' {} +
-          find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/jcenter|https://repo1.maven.org/maven2|g' {} +
+          git submodule sync --recursive
+          git submodule update --init --recursive --force
+          git submodule foreach --recursive git reset --hard
+          git submodule foreach --recursive git clean -fdx
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
-          echo "Official repositories configured."
 
-      # 5. إعداد هيكل مشروع تطبيق المولد المستقل
-      - name: Configure KeyGen Application Project
+      # 4. معالجة وتوليد أيقونة وشعار Riders Soloution Pk وأيقونة واتساب
+      - name: Create App Icons and WhatsApp Vector
         run: |
-          rm -rf app/src/main/java
-          rm -rf app/src/main/res
-          rm -rf app/src/main/cpp
-          rm -rf app/src/main/resources
-          rm -rf app/build
+          python3 - << 'PYEOF'
+          import os, glob, shutil
+          from PIL import Image
 
-          mkdir -p app/src/main/java/pk/riders/keygen
-          mkdir -p app/src/main/res/values
+          # حذف الأيقونات القديمة لمنع تكرار الموارد
+          for f in glob.glob('app/src/main/res/mipmap*/*launcher*'):
+              try: os.remove(f)
+              except Exception: pass
 
-          # ملف AndroidManifest.xml بالإنجليزية
-          cat << 'PYEOF' > app/src/main/AndroidManifest.xml
-          <?xml version="1.0" encoding="utf-8"?>
-          <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-              package="pk.riders.keygen">
+          if os.path.exists('app/src/main/res/mipmap-anydpi-v26'):
+              shutil.rmtree('app/src/main/res/mipmap-anydpi-v26', ignore_errors=True)
 
-              <application
-                  android:allowBackup="true"
-                  android:label="@string/app_name"
-                  android:supportsRtl="false"
-                  android:theme="@android:style/Theme.DeviceDefault">
+          # قراءة صورة الشعار الجديدة من المستودع
+          target_img = None
+          for f in sorted(os.listdir('.')):
+              if f.lower().endswith(('.png', '.jpg', '.jpeg')) and not f.startswith('.'):
+                  target_img = f
+                  break
+
+          if target_img:
+              im = Image.open(target_img).convert('RGBA')
+              os.makedirs('app/src/main/res/drawable', exist_ok=True)
+              im.resize((512, 512), Image.Resampling.LANCZOS).save('app/src/main/res/drawable/app_logo.png')
+
+              densities = {'mipmap-mdpi': 48, 'mipmap-hdpi': 72, 'mipmap-xhdpi': 96, 'mipmap-xxhdpi': 144, 'mipmap-xxxhdpi': 192}
+              for folder, sz in densities.items():
+                  dest = os.path.join('app/src/main/res', folder)
+                  os.makedirs(dest, exist_ok=True)
+                  resized = im.resize((sz, sz), Image.Resampling.LANCZOS)
+                  resized.save(os.path.join(dest, 'ic_launcher.png'))
+                  resized.save(os.path.join(dest, 'ic_launcher_round.png'))
+
+          # رسم أيقونة واتساب رسمية بصيغة Vector
+          wa_vector = """<vector xmlns:android="http://schemas.android.com/apk/res/android"
+              android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
+            <path android:fillColor="#25D366"
+                android:pathData="M12.04,2C6.58,2 2.13,6.45 2.13,11.91C2.13,13.66 2.59,15.36 3.45,16.86L2.05,22L7.3,20.62C8.75,21.41 10.38,21.83 12.04,21.83C17.5,21.83 21.95,17.38 21.95,11.92C21.95,9.27 20.92,6.78 19.05,4.91C17.18,3.03 14.69,2 12.04,2M12.05,3.67C14.25,3.67 16.31,4.53 17.87,6.09C19.42,7.65 20.28,9.72 20.28,11.92C20.28,16.46 16.58,20.15 12.04,20.15C10.56,20.15 9.11,19.76 7.85,19L7.55,18.83L4.43,19.65L5.26,16.61L5.06,16.29C4.24,15 3.8,13.47 3.8,11.91C3.81,7.37 7.5,3.67 12.05,3.67M8.53,7.33C8.37,7.33 8.1,7.39 7.87,7.64C7.65,7.89 7.02,8.48 7.02,9.68C7.02,10.88 7.89,12.04 8.01,12.2C8.13,12.37 9.72,14.82 12.16,15.87C12.74,16.12 13.19,16.27 13.55,16.38C14.13,16.57 14.66,16.54 15.08,16.48C15.55,16.41 16.52,15.89 16.72,15.32C16.92,14.75 16.92,14.27 16.86,14.17C16.8,14.07 16.64,14.01 16.4,13.89C16.16,13.77 15,13.2 14.78,13.12C14.56,13.04 14.4,13 14.24,13.24C14.08,13.48 13.62,14.01 13.48,14.17C13.34,14.33 13.2,14.35 12.96,14.23C12.72,14.11 11.95,13.86 11.03,13.04C10.32,12.41 9.84,11.63 9.7,11.39C9.56,11.15 9.69,11.02 9.81,10.9C9.92,10.79 10.05,10.62 10.17,10.48C10.29,10.34 10.33,10.24 10.41,10.08C10.49,9.92 10.45,9.78 10.39,9.66C10.33,9.54 9.87,8.4 9.68,7.93C9.49,7.48 9.3,7.54 9.16,7.53C9.03,7.52 8.87,7.33 8.53,7.33Z"/>
+          </vector>"""
+          os.makedirs('app/src/main/res/drawable', exist_ok=True)
+          with open('app/src/main/res/drawable/ic_whatsapp.xml', 'w') as f:
+              f.write(wa_vector)
+          PYEOF
+
+      # 5. تعديل الهوية إلى Riders Soloution Pk وحصر التواصل على الواتساب فقط
+      - name: Apply Branding and Exclude Telegram
+        run: |
+          python3 - << 'PYEOF'
+          import os, re, shutil, glob
+
+          # حذف الصينية بالكامل
+          for zh in glob.glob('app/src/main/res/values-zh*'):
+              shutil.rmtree(zh, ignore_errors=True)
+
+          # ضبط معرف الحزمة واللغات
+          if os.path.exists('app/build.gradle'):
+              with open('app/build.gradle', 'r', encoding='utf-8', errors='ignore') as f:
+                  bg = f.read()
+              bg = re.sub(r'applicationId\s+.*', 'applicationId "riders.soloution.pk"', bg)
+              if 'resourceConfigurations' not in bg:
+                  bg = re.sub(r'(defaultConfig\s*\{)', r'\1\n        resourceConfigurations += ["en", "ar"]', bg)
+              with open('app/build.gradle', 'w') as f:
+                  f.write(bg)
+
+          # تحديث نصوص التطبيق واستبدال التليجرام بواتساب
+          for sp in glob.glob('app/src/main/res/values*/strings.xml'):
+              with open(sp, 'r', encoding='utf-8', errors='ignore') as f:
+                  st = f.read()
+              st = re.sub(r'CamSwap|RiyadhRiders', 'Riders Soloution Pk', st)
+              st = re.sub(r'View &amp; report issues on GitHub|Join Telegram Channel', 'WhatsApp: +966547425565', st)
+              st = re.sub(r'Click to check on GitHub', 'Riders Soloution Pk Official', st)
+              st = re.sub(r'zensu357|alberta davis|zeko_1x', 'Riders Soloution Pk', st)
+              with open(sp, 'w', encoding='utf-8') as f:
+                  f.write(st)
+
+          # استبدال الروابط بواتساب في جميع الأكواد
+          wa_link = "https://api.whatsapp.com/send?phone=966547425565"
+          for root, dirs, files in os.walk('app/src/main/java'):
+              for file in files:
+                  if file.endswith(('.kt', '.java')):
+                      fp = os.path.join(root, file)
+                      with open(fp, 'r', encoding='utf-8', errors='ignore') as f:
+                          code = f.read()
+                      orig = code
+                      code = re.sub(r'https?://github\.com/[a-zA-Z0-9_\-\./]+', wa_link, code)
+                      code = re.sub(r'https?://t\.me/[a-zA-Z0-9_\-]+', wa_link, code)
+                      code = code.replace('"CamSwap"', '"Riders Soloution Pk"')
+                      code = code.replace('"RiyadhRiders"', '"Riders Soloution Pk"')
+                      code = code.replace('Join Telegram Channel', 'WhatsApp: 0547425565')
+                      code = code.replace('View & report issues on GitHub', 'WhatsApp: +966547425565')
+                      code = re.sub(r'966505812141', '966547425565', code)
+                      if code != orig:
+                          with open(fp, 'w', encoding='utf-8') as f:
+                              f.write(code)
+
+          if os.path.exists('app/src/main/AndroidManifest.xml'):
+              with open('app/src/main/AndroidManifest.xml', 'r', encoding='utf-8', errors='ignore') as f:
+                  mf = f.read()
+              mf = re.sub(r'android:label="[^"]*"', 'android:label="Riders Soloution Pk"', mf)
+              with open('app/src/main/AndroidManifest.xml', 'w', encoding='utf-8') as f:
+                  f.write(mf)
+
+          sc = 'app/src/main/resources/META-INF/xposed/scope.list'
+          if os.path.exists(sc):
+              with open(sc, 'w', encoding='utf-8') as f:
+                  f.write('riders.soloution.pk\n')
+          PYEOF
+
+      # 6. توليد مفاتيح تشفير التراخيص RSA-2048
+      - name: Generate RSA Cryptographic Keys
+        run: |
+          mkdir -p keys_output
+          python3 - << 'PYEOF'
+          from cryptography.hazmat.primitives.asymmetric import rsa
+          from cryptography.hazmat.primitives import serialization
+          import base64
+
+          key = rsa.generate_private_key(65537, 2048)
+          with open('keys_output/private_key.pem', 'wb') as f:
+              f.write(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
+          pub = key.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+          clean_pub = base64.b64encode(pub).decode('utf-8')
+          with open('keys_output/public_key_clean.txt', 'w') as f:
+              f.write(clean_pub)
+          PYEOF
+          echo "PUB_KEY=$(cat keys_output/public_key_clean.txt)" >> $GITHUB_ENV
+
+      # 7. حقن نظام الحماية وشاشة التفعيل
+      - name: Inject Security Protection and Activation UI
+        run: |
+          python3 - << 'PYEOF'
+          import os, re
+
+          pub_key = os.environ.get('PUB_KEY', '')
+          target_dir = 'app/src/main/java/io/github/zensu357/camswap'
+          pkg = 'io.github.zensu357.camswap'
+
+          if not os.path.exists(target_dir):
+              for root, dirs, files in os.walk('app/src/main/java'):
+                  if files:
+                      target_dir = root
+                      pkg = root.replace('app/src/main/java/', '').replace('/', '.')
+                      break
+
+          lic_manager = f'''package {pkg};
+          import android.content.Context;
+          import android.os.Build;
+          import android.os.Environment;
+          import android.provider.Settings;
+          import android.util.Base64;
+          import org.json.JSONObject;
+          import java.io.*;
+          import java.security.*;
+          import java.security.spec.X509EncodedKeySpec;
+          import java.text.SimpleDateFormat;
+          import java.util.*;
+
+          public class LicenseManager {{
+              public static final String PUBLIC_KEY_BASE64 = "{pub_key}";
+              public static class LicenseInfo {{
+                  public boolean isValid;
+                  public String owner = "";
+                  public String hwid = "";
+                  public String expiresAt = "";
+                  public String tier = "";
+                  public String errorMessage = null;
+                  public LicenseInfo(boolean v) {{ this.isValid = v; }}
+                  public LicenseInfo(boolean v, String msg) {{ this.isValid = v; this.errorMessage = msg; }}
+                  public LicenseInfo(boolean v, String o, String h, String exp, String t) {{
+                      this.isValid = v; this.owner = o; this.hwid = h; this.expiresAt = exp; this.tier = t;
+                  }}
+              }}
+              public static String getDeviceHWID(Context ctx) {{
+                  try {{
+                      String aId = "";
+                      if (ctx != null) aId = Settings.Secure.getString(ctx.getContentResolver(), Settings.Secure.ANDROID_ID);
+                      if (aId == null) aId = "";
+                      String raw = aId + Build.BOARD + Build.BRAND + Build.DEVICE + Build.HARDWARE + Build.MANUFACTURER + Build.MODEL;
+                      MessageDigest md = MessageDigest.getInstance("SHA-256");
+                      byte[] h = md.digest(raw.getBytes("UTF-8"));
+                      StringBuilder sb = new StringBuilder();
+                      for (byte b : h) {{
+                          String hex = Integer.toHexString(0xff & b);
+                          if (hex.length() == 1) sb.append('0');
+                          sb.append(hex);
+                      }}
+                      return sb.substring(0, 16).toUpperCase(Locale.US);
+                  }} catch (Exception e) {{ return "UNKNOWN_HWID"; }}
+              }}
+              public static LicenseInfo verifyLicense(Context ctx, String key) {{
+                  if (key == null || key.trim().isEmpty()) return new LicenseInfo(false, "Key is empty");
+                  String k = key.trim();
+                  int dot = k.indexOf('.');
+                  if (dot <= 0 || dot >= k.length() - 1) return new LicenseInfo(false, "Invalid format");
+                  try {{
+                      byte[] pBytes = Base64.decode(k.substring(0, dot).trim(), Base64.DEFAULT);
+                      byte[] sBytes = Base64.decode(k.substring(dot + 1).trim(), Base64.DEFAULT);
+                      X509EncodedKeySpec spec = new X509EncodedKeySpec(Base64.decode(PUBLIC_KEY_BASE64, Base64.DEFAULT));
+                      PublicKey pk = KeyFactory.getInstance("RSA").generatePublic(spec);
+                      Signature sig = Signature.getInstance("SHA256withRSA");
+                      sig.initVerify(pk);
+                      sig.update(pBytes);
+                      if (!sig.verify(sBytes)) return new LicenseInfo(false, "Signature mismatch");
+                      JSONObject j = new JSONObject(new String(pBytes, "UTF-8"));
+                      String h = j.optString("hwid", "");
+                      String o = j.optString("owner", "User");
+                      String exp = j.optString("expires_at", "");
+                      String t = j.optString("tier", "VIP");
+                      if (!h.equalsIgnoreCase(getDeviceHWID(ctx))) return new LicenseInfo(false, "HWID mismatch");
+                      if (!"LIFETIME".equalsIgnoreCase(exp)) {{
+                          SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+                          Date d = sdf.parse(exp);
+                          if (d != null && new Date().after(d)) return new LicenseInfo(false, "License expired");
+                      }}
+                      return new LicenseInfo(true, o, h, exp, t);
+                  }} catch (Exception e) {{ return new LicenseInfo(false, e.getMessage()); }}
+              }}
+              public static LicenseInfo verifyAndSave(Context ctx, String key) {{
+                  LicenseInfo res = verifyLicense(ctx, key);
+                  if (res.isValid) {{
+                      try {{
+                          File dir = new File(Environment.getExternalStorageDirectory(), "RidersSoloutionPk");
+                          if (!dir.exists()) dir.mkdirs();
+                          FileWriter fw = new FileWriter(new File(dir, "license.key"));
+                          fw.write(key.trim()); fw.close();
+                      }} catch (Exception ignored) {{}}
+                      if (ctx != null) ctx.getSharedPreferences("pk_rider_lic", Context.MODE_PRIVATE).edit().putString("k", key.trim()).apply();
+                  }}
+                  return res;
+              }}
+              public static String readKey(Context ctx) {{
+                  try {{
+                      File f = new File(Environment.getExternalStorageDirectory(), "RidersSoloutionPk/license.key");
+                      if (!f.exists()) f = new File(Environment.getExternalStorageDirectory(), "CamSwap/license.key");
+                      if (f.exists()) {{
+                          BufferedReader br = new BufferedReader(new FileReader(f));
+                          String l = br.readLine(); br.close();
+                          if (l != null && !l.trim().isEmpty()) return l.trim();
+                      }}
+                  }} catch (Exception ignored) {{}}
+                  if (ctx != null) return ctx.getSharedPreferences("pk_rider_lic", Context.MODE_PRIVATE).getString("k", "");
+                  return "";
+              }}
+              public static LicenseInfo checkSavedLicense(Context ctx) {{ return verifyLicense(ctx, readKey(ctx)); }}
+              public static boolean isSystemLicensed() {{ return checkSavedLicense(null).isValid; }}
+          }}'''
+          with open(os.path.join(target_dir, 'LicenseManager.java'), 'w') as f:
+              f.write(lic_manager)
+
+          act_activity = f'''package {pkg};
+          import android.app.Activity;
+          import android.content.*;
+          import android.graphics.Color;
+          import android.net.Uri;
+          import android.os.Bundle;
+          import android.view.Gravity;
+          import android.widget.*;
+          import java.net.URLEncoder;
+
+          public class ActivationActivity extends Activity {{
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {{
+                  super.onCreate(savedInstanceState);
+                  ScrollView sv = new ScrollView(this);
+                  sv.setBackgroundColor(Color.parseColor("#121212"));
+                  LinearLayout root = new LinearLayout(this);
+                  root.setOrientation(LinearLayout.VERTICAL);
+                  root.setPadding(48, 60, 48, 80);
+                  root.setGravity(Gravity.CENTER_HORIZONTAL);
+
+                  ImageView logo = new ImageView(this);
+                  try {{
+                      int resId = getResources().getIdentifier("app_logo", "drawable", getPackageName());
+                      if (resId != 0) logo.setImageResource(resId);
+                  }} catch (Exception ignored) {{}}
+                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(220, 220);
+                  lp.bottomMargin = 24;
+                  logo.setLayoutParams(lp);
+                  root.addView(logo);
+
+                  TextView title = new TextView(this);
+                  title.setText("Riders Soloution Pk");
+                  title.setTextSize(24);
+                  title.setTextColor(Color.WHITE);
+                  title.setGravity(Gravity.CENTER);
+                  root.addView(title);
+
+                  TextView sub = new TextView(this);
+                  sub.setText("Official Activation & License Verification");
+                  sub.setTextColor(Color.GRAY);
+                  sub.setGravity(Gravity.CENTER);
+                  sub.setPadding(0, 4, 0, 30);
+                  root.addView(sub);
+
+                  final String hwid = LicenseManager.getDeviceHWID(this);
+                  TextView hwidLbl = new TextView(this);
+                  hwidLbl.setText("Your Device HWID:");
+                  hwidLbl.setTextColor(Color.parseColor("#AAAAAA"));
+                  root.addView(hwidLbl);
+
+                  TextView hwidVal = new TextView(this);
+                  hwidVal.setText(hwid);
+                  hwidVal.setTextSize(17);
+                  hwidVal.setTextColor(Color.parseColor("#00E676"));
+                  hwidVal.setPadding(0, 8, 0, 16);
+                  root.addView(hwidVal);
+
+                  Button copyBtn = new Button(this);
+                  copyBtn.setText("Copy Device HWID");
+                  copyBtn.setBackgroundColor(Color.parseColor("#1E88E5"));
+                  copyBtn.setTextColor(Color.WHITE);
+                  copyBtn.setOnClickListener(v -> {{
+                      ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                      cm.setPrimaryClip(ClipData.newPlainText("HWID", hwid));
+                      Toast.makeText(this, "HWID copied to clipboard!", Toast.LENGTH_SHORT).show();
+                  }});
+                  root.addView(copyBtn);
+
+                  TextView contactLbl = new TextView(this);
+                  contactLbl.setText("To get an activation key, contact support via WhatsApp:");
+                  contactLbl.setTextColor(Color.parseColor("#AAAAAA"));
+                  contactLbl.setPadding(0, 28, 0, 10);
+                  root.addView(contactLbl);
+
+                  Button waBtn = new Button(this);
+                  waBtn.setText("💬 WhatsApp Support (+966547425565)");
+                  waBtn.setBackgroundColor(Color.parseColor("#25D366"));
+                  waBtn.setTextColor(Color.WHITE);
+                  waBtn.setOnClickListener(v -> {{
+                      try {{
+                          String msg = "Hello, I want to activate license for Riders Soloution Pk.\\nDevice HWID: " + hwid;
+                          String url = "https://api.whatsapp.com/send?phone=966547425565&text=" + URLEncoder.encode(msg, "UTF-8");
+                          startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
+                      }} catch (Exception e) {{
+                          Toast.makeText(this, "Cannot open WhatsApp", Toast.LENGTH_SHORT).show();
+                      }}
+                  }});
+                  root.addView(waBtn);
+
+                  TextView keyLbl = new TextView(this);
+                  keyLbl.setText("Enter License Key:");
+                  keyLbl.setTextColor(Color.parseColor("#AAAAAA"));
+                  keyLbl.setPadding(0, 28, 0, 10);
+                  root.addView(keyLbl);
+
+                  final EditText keyInput = new EditText(this);
+                  keyInput.setHint("Paste full key here...");
+                  keyInput.setHintTextColor(Color.GRAY);
+                  keyInput.setTextColor(Color.WHITE);
+                  keyInput.setBackgroundColor(Color.parseColor("#2C2C2C"));
+                  keyInput.setPadding(24, 24, 24, 24);
+                  root.addView(keyInput);
+
+                  Button actBtn = new Button(this);
+                  actBtn.setText("Activate License");
+                  actBtn.setBackgroundColor(Color.parseColor("#00C853"));
+                  actBtn.setTextColor(Color.WHITE);
+
+                  final TextView status = new TextView(this);
+                  status.setGravity(Gravity.CENTER);
+                  status.setPadding(0, 20, 0, 16);
+
+                  actBtn.setOnClickListener(v -> {{
+                      String val = keyInput.getText().toString().trim();
+                      LicenseManager.LicenseInfo info = LicenseManager.verifyAndSave(this, val);
+                      if (info.isValid) {{
+                          status.setTextColor(Color.parseColor("#00E676"));
+                          status.setText("Activated! Owner: " + info.owner + " | Tier: " + info.tier + " | Exp: " + info.expiresAt);
+                          Toast.makeText(this, "Activated successfully!", Toast.LENGTH_LONG).show();
+                          try {{
+                              startActivity(new Intent(this, Class.forName(getPackageName() + ".MainActivity")));
+                              finish();
+                          }} catch (Exception ignored) {{ finish(); }}
+                      }} else {{
+                          status.setTextColor(Color.parseColor("#FF5252"));
+                          status.setText("Activation failed: " + info.errorMessage);
+                      }}
+                  }});
+                  root.addView(actBtn);
+                  root.addView(status);
+
+                  if (LicenseManager.checkSavedLicense(this).isValid) {{
+                      status.setTextColor(Color.parseColor("#00E676"));
+                      status.setText("Application is already licensed and active.");
+                  }}
+
+                  sv.addView(root);
+                  setContentView(sv);
+              }}
+          }}'''
+          with open(os.path.join(target_dir, 'ActivationActivity.java'), 'w') as f:
+              f.write(act_activity)
+
+          main_kt = os.path.join(target_dir, 'MainActivity.kt')
+          if os.path.exists(main_kt):
+              with open(main_kt, 'r') as f: m_code = f.read()
+              if 'ActivationActivity' not in m_code:
+                  lock_k = '''
+                  val licInfo = LicenseManager.checkSavedLicense(this)
+                  if (!licInfo.isValid) {
+                      val intent = android.content.Intent(this, ActivationActivity::class.java)
+                      startActivity(intent)
+                      finish()
+                      return
+                  }
+                  '''
+                  m_code = m_code.replace('super.onCreate(savedInstanceState)', 'super.onCreate(savedInstanceState)\\n' + lock_k)
+                  with open(main_kt, 'w') as f: f.write(m_code)
+
+          main_java = os.path.join(target_dir, 'MainActivity.java')
+          if os.path.exists(main_java):
+              with open(main_java, 'r') as f: mj_code = f.read()
+              if 'ActivationActivity' not in mj_code:
+                  lock_j = '''
+                  LicenseManager.LicenseInfo licInfo = LicenseManager.checkSavedLicense(this);
+                  if (!licInfo.isValid) {
+                      android.content.Intent intent = new android.content.Intent(this, ActivationActivity.class);
+                      startActivity(intent);
+                      finish();
+                      return;
+                  }
+                  '''
+                  mj_code = mj_code.replace('super.onCreate(savedInstanceState);', 'super.onCreate(savedInstanceState);\\n' + lock_j)
+                  with open(main_java, 'w') as f: f.write(mj_code)
+
+          manifest_path = 'app/src/main/AndroidManifest.xml'
+          if os.path.exists(manifest_path):
+              with open(manifest_path, 'r') as f: m_cnt = f.read()
+              if 'ActivationActivity' not in m_cnt:
+                  act_decl = f'''
                   <activity
-                      android:name=".MainActivity"
+                      android:name="{pkg}.ActivationActivity"
                       android:exported="true"
-                      android:windowSoftInputMode="adjustResize">
-                      <intent-filter>
-                          <action android:name="android.intent.action.MAIN" />
-                          <category android:name="android.intent.category.LAUNCHER" />
-                      </intent-filter>
-                  </activity>
-              </application>
-          </manifest>
+                      android:label="Riders Soloution Pk" />
+                  '''
+                  m_cnt = m_cnt.replace('</application>', act_decl + '\\n    </application>')
+                  with open(manifest_path, 'w') as f: f.write(m_cnt)
+
+          hook_path = os.path.join(target_dir, 'HookMain.java')
+          if os.path.exists(hook_path):
+              with open(hook_path, 'r') as f: h_cnt = f.read()
+              h_cnt = re.sub(r'MODULE_PACKAGE = "[^"]+"', 'MODULE_PACKAGE = "riders.soloution.pk"', h_cnt)
+              if 'isSystemLicensed' not in h_cnt:
+                  h_cnt = h_cnt.replace(
+                      'if (lpparam.packageName.equals(MODULE_PACKAGE)) {\\n            return;\\n        }',
+                      'if (lpparam.packageName.equals(MODULE_PACKAGE)) {\\n            return;\\n        }\\n\\n        if (!LicenseManager.isSystemLicensed()) {\\n            return;\\n        }'
+                  )
+              with open(hook_path, 'w') as f: f.write(h_cnt)
           PYEOF
 
-          # ملف strings.xml
-          cat << 'PYEOF' > app/src/main/res/values/strings.xml
-          <resources>
-              <string name="app_name">Riders Soloution Pk KeyGen</string>
-          </resources>
-          PYEOF
-
-          # ملف build.gradle
-          cat << 'PYEOF' > app/build.gradle
-          plugins {
-              id 'com.android.application'
+      # 8. قواعد ProGuard
+      - name: Configure ProGuard Rules
+        run: |
+          mkdir -p app
+          cat << 'EOF' >> app/proguard-rules.pro
+          -dontwarn de.robv.android.xposed.**
+          -dontwarn io.github.zensu357.**
+          -dontwarn **
+          -keepclasseswithmembernames class * {
+              native <methods>;
           }
+          -keep class io.github.zensu357.camswap.ActivationActivity { *; }
+          -keep class io.github.zensu357.camswap.LicenseManager { *; }
+          EOF
 
-          android {
-              namespace 'pk.riders.keygen'
-              compileSdk 34
-
-              defaultConfig {
-                  applicationId "pk.riders.keygen"
-                  minSdk 24
-                  targetSdk 34
-                  versionCode 1
-                  versionName "1.0"
-              }
-
-              signingConfigs {
-                  release {
-                      storeFile file('release.keystore')
-                      storePassword 'pass123456'
-                      keyAlias 'release_key'
-                      keyPassword 'pass123456'
-                  }
-              }
-
-              buildTypes {
-                  release {
-                      minifyEnabled false
-                      signingConfig signingConfigs.release
-                  }
-              }
-              compileOptions {
-                  sourceCompatibility JavaVersion.VERSION_17
-                  targetCompatibility JavaVersion.VERSION_17
-              }
-          }
-          PYEOF
-
-          # توليد شهادة التوقيع الرسمية
+      # 9. إعداد شهادة التوقيع
+      - name: Configure Automatic Release Signing in Gradle
+        run: |
+          mkdir -p app
           keytool -genkeypair -v \
             -keystore app/release.keystore \
             -alias release_key \
@@ -127,432 +521,50 @@ jobs:
             -validity 10000 \
             -storepass "pass123456" \
             -keypass "pass123456" \
-            -dname "CN=KeyGen, O=RidersSoloutionPk, C=SA"
+            -dname "CN=RidersSoloutionPk, O=Dev, C=SA"
 
-      # 6. كتابة كود تطبيق المولد كاملاً باللغة الإنجليزية وواتساب فقط
-      - name: Write KeyGen MainActivity
-        run: |
-          cat << 'PYEOF' > app/src/main/java/pk/riders/keygen/MainActivity.java.raw
-          package pk.riders.keygen;
-
-          import android.app.Activity;
-          import android.app.AlertDialog;
-          import android.app.DatePickerDialog;
-          import android.content.ClipData;
-          import android.content.ClipboardManager;
-          import android.content.Context;
-          import android.content.Intent;
-          import android.content.SharedPreferences;
-          import android.graphics.Color;
-          import android.net.Uri;
-          import android.os.Bundle;
-          import android.util.Base64;
-          import android.view.Gravity;
-          import android.view.View;
-          import android.widget.*;
-          import org.json.JSONArray;
-          import org.json.JSONObject;
-
-          import java.net.URLEncoder;
-          import java.security.KeyFactory;
-          import java.security.PrivateKey;
-          import java.security.Signature;
-          import java.security.spec.PKCS8EncodedKeySpec;
-          import java.util.Calendar;
-          import java.util.Locale;
-
-          public class MainActivity extends Activity {
-              private EditText etHwid, etOwner;
-              private TextView tvSelectedDate, tvResultKey, tvKeyStatus;
-              private Spinner spTier;
-              private String selectedExpiry = "LIFETIME";
-              private LinearLayout historyLayout;
-
-              @Override
-              protected void onCreate(Bundle savedInstanceState) {
-                  super.onCreate(savedInstanceState);
-
-                  ScrollView scrollView = new ScrollView(this);
-                  scrollView.setFillViewport(true);
-                  scrollView.setBackgroundColor(Color.parseColor("#121212"));
-
-                  LinearLayout root = new LinearLayout(this);
-                  root.setOrientation(LinearLayout.VERTICAL);
-                  root.setPadding(40, 50, 40, 60);
-
-                  TextView title = new TextView(this);
-                  title.setText("Riders Soloution Pk KeyGen");
-                  title.setTextSize(22);
-                  title.setTextColor(Color.parseColor("#00E676"));
-                  title.setGravity(Gravity.CENTER);
-                  root.addView(title);
-
-                  tvKeyStatus = new TextView(this);
-                  tvKeyStatus.setGravity(Gravity.CENTER);
-                  tvKeyStatus.setPadding(0, 10, 0, 20);
-                  root.addView(tvKeyStatus);
-                  updateKeyStatus();
-
-                  Button btnSetKey = new Button(this);
-                  btnSetKey.setText("🔑 Configure Private Key (private_key.pem)");
-                  btnSetKey.setBackgroundColor(Color.parseColor("#37474F"));
-                  btnSetKey.setTextColor(Color.WHITE);
-                  btnSetKey.setOnClickListener(v -> showSetKeyDialog());
-                  root.addView(btnSetKey);
-
-                  root.addView(createLabel("Client Hardware ID (HWID):"));
-                  etHwid = new EditText(this);
-                  etHwid.setHint("Paste client HWID here...");
-                  etHwid.setHintTextColor(Color.GRAY);
-                  etHwid.setTextColor(Color.WHITE);
-                  etHwid.setBackgroundColor(Color.parseColor("#222222"));
-                  etHwid.setPadding(24, 24, 24, 24);
-                  root.addView(etHwid);
-
-                  root.addView(createLabel("Client Name / Note:"));
-                  etOwner = new EditText(this);
-                  etOwner.setHint("e.g. VIP Customer / John...");
-                  etOwner.setHintTextColor(Color.GRAY);
-                  etOwner.setTextColor(Color.WHITE);
-                  etOwner.setBackgroundColor(Color.parseColor("#222222"));
-                  etOwner.setPadding(24, 24, 24, 24);
-                  root.addView(etOwner);
-
-                  root.addView(createLabel("License Tier:"));
-                  spTier = new Spinner(this);
-                  ArrayAdapter<String> adapter = new ArrayAdapter<>(this, android.R.layout.simple_spinner_dropdown_item, new String[]{"VIP", "PRO", "ULTIMATE"});
-                  spTier.setAdapter(adapter);
-                  root.addView(spTier);
-
-                  root.addView(createLabel("Validity Period:"));
-                  tvSelectedDate = new TextView(this);
-                  tvSelectedDate.setText("Expiry: Lifetime Access (LIFETIME)");
-                  tvSelectedDate.setTextColor(Color.parseColor("#00E676"));
-                  tvSelectedDate.setTextSize(15);
-                  tvSelectedDate.setPadding(0, 10, 0, 15);
-                  root.addView(tvSelectedDate);
-
-                  LinearLayout dateBtns1 = new LinearLayout(this);
-                  dateBtns1.setOrientation(LinearLayout.HORIZONTAL);
-                  addQuickDateBtn(dateBtns1, "1 Month", 30);
-                  addQuickDateBtn(dateBtns1, "3 Months", 90);
-                  addQuickDateBtn(dateBtns1, "1 Year", 365);
-                  root.addView(dateBtns1);
-
-                  LinearLayout dateBtns2 = new LinearLayout(this);
-                  dateBtns2.setOrientation(LinearLayout.HORIZONTAL);
-
-                  Button btnCalendar = new Button(this);
-                  btnCalendar.setText("📅 Custom Calendar");
-                  btnCalendar.setBackgroundColor(Color.parseColor("#1E88E5"));
-                  btnCalendar.setTextColor(Color.WHITE);
-                  btnCalendar.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
-                  btnCalendar.setOnClickListener(v -> showDatePicker());
-                  dateBtns2.addView(btnCalendar);
-
-                  Button btnLifetime = new Button(this);
-                  btnLifetime.setText("♾️ Lifetime");
-                  btnLifetime.setBackgroundColor(Color.parseColor("#424242"));
-                  btnLifetime.setTextColor(Color.WHITE);
-                  btnLifetime.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
-                  btnLifetime.setOnClickListener(v -> {
-                      selectedExpiry = "LIFETIME";
-                      tvSelectedDate.setText("Expiry: Lifetime Access (LIFETIME)");
-                  });
-                  dateBtns2.addView(btnLifetime);
-                  root.addView(dateBtns2);
-
-                  Button btnGen = new Button(this);
-                  btnGen.setText("⚡ Generate License & Save Device");
-                  btnGen.setBackgroundColor(Color.parseColor("#00C853"));
-                  btnGen.setTextColor(Color.WHITE);
-                  btnGen.setTextSize(16);
-                  btnGen.setPadding(0, 24, 0, 24);
-                  LinearLayout.LayoutParams genParams = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-                  genParams.topMargin = 30;
-                  btnGen.setLayoutParams(genParams);
-                  btnGen.setOnClickListener(v -> generateAndSaveKey());
-                  root.addView(btnGen);
-
-                  root.addView(createLabel("Generated License Key:"));
-                  tvResultKey = new TextView(this);
-                  tvResultKey.setTextIsSelectable(true);
-                  tvResultKey.setTextColor(Color.WHITE);
-                  tvResultKey.setBackgroundColor(Color.parseColor("#1E1E1E"));
-                  tvResultKey.setPadding(24, 24, 24, 24);
-                  root.addView(tvResultKey);
-
-                  LinearLayout actionBtns = new LinearLayout(this);
-                  actionBtns.setOrientation(LinearLayout.HORIZONTAL);
-
-                  Button btnCopy = new Button(this);
-                  btnCopy.setText("📋 Copy");
-                  btnCopy.setBackgroundColor(Color.parseColor("#1976D2"));
-                  btnCopy.setTextColor(Color.WHITE);
-                  btnCopy.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
-                  btnCopy.setOnClickListener(v -> {
-                      String k = tvResultKey.getText().toString().trim();
-                      if (!k.isEmpty()) {
-                          ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                          cm.setPrimaryClip(ClipData.newPlainText("License", k));
-                          Toast.makeText(this, "License key copied to clipboard!", Toast.LENGTH_SHORT).show();
-                      }
-                  });
-                  actionBtns.addView(btnCopy);
-
-                  # زر واتساب بالرقم الجديد والرسالة التلقائية المسبقة (بدون تليجرام)
-                  Button btnWa = new Button(this);
-                  btnWa.setText("💬 WhatsApp (+966547425565)");
-                  btnWa.setBackgroundColor(Color.parseColor("#25D366"));
-                  btnWa.setTextColor(Color.WHITE);
-                  btnWa.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2.0f));
-                  btnWa.setOnClickListener(v -> shareViaWhatsApp());
-                  actionBtns.addView(btnWa);
-                  root.addView(actionBtns);
-
-                  TextView historyHeader = new TextView(this);
-                  historyHeader.setText("📋 Registered Devices & Issued Keys:");
-                  historyHeader.setTextSize(18);
-                  historyHeader.setTextColor(Color.WHITE);
-                  historyHeader.setPadding(0, 40, 0, 16);
-                  root.addView(historyHeader);
-
-                  historyLayout = new LinearLayout(this);
-                  historyLayout.setOrientation(LinearLayout.VERTICAL);
-                  root.addView(historyLayout);
-
-                  loadHistory();
-
-                  scrollView.addView(root);
-                  setContentView(scrollView);
-              }
-
-              private void addQuickDateBtn(LinearLayout parent, String title, int days) {
-                  Button btn = new Button(this);
-                  btn.setText(title);
-                  btn.setBackgroundColor(Color.parseColor("#2A2A2A"));
-                  btn.setTextColor(Color.WHITE);
-                  btn.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
-                  btn.setOnClickListener(v -> {
-                      Calendar c = Calendar.getInstance();
-                      c.add(Calendar.DAY_OF_YEAR, days);
-                      selectedExpiry = String.format(Locale.US, "%04d-%02d-%02d", c.get(Calendar.YEAR), c.get(Calendar.MONTH) + 1, c.get(Calendar.DAY_OF_MONTH));
-                      tvSelectedDate.setText("Expiry (" + title + "): " + selectedExpiry);
-                  });
-                  parent.addView(btn);
-              }
-
-              private TextView createLabel(String text) {
-                  TextView tv = new TextView(this);
-                  tv.setText(text);
-                  tv.setTextColor(Color.parseColor("#AAAAAA"));
-                  tv.setPadding(0, 24, 0, 8);
-                  return tv;
-              }
-
-              private void updateKeyStatus() {
-                  SharedPreferences prefs = getSharedPreferences("keygen_cfg", MODE_PRIVATE);
-                  String savedKey = prefs.getString("priv_key", "");
-                  if (!savedKey.isEmpty()) {
-                      tvKeyStatus.setText("🟢 Private Key Ready & Loaded");
-                      tvKeyStatus.setTextColor(Color.parseColor("#00E676"));
-                  } else {
-                      tvKeyStatus.setText("🔴 Private Key Not Set (Click button below)");
-                      tvKeyStatus.setTextColor(Color.parseColor("#FF5252"));
+          python3 - << 'EOF'
+          with open('app/build.gradle', 'r') as f:
+              content = f.read()
+          signing_cfg = '''
+              signingConfigs {
+                  release {
+                      storeFile file('release.keystore')
+                      storePassword 'pass123456'
+                      keyAlias 'release_key'
+                      keyPassword 'pass123456'
                   }
               }
+          '''
+          if 'signingConfigs' not in content:
+              content = content.replace('buildTypes {', signing_cfg + '\n    buildTypes {')
+              content = content.replace('release {', 'release {\n            signingConfig signingConfigs.release')
+              with open('app/build.gradle', 'w') as f:
+                  f.write(content)
+          EOF
 
-              private void showSetKeyDialog() {
-                  AlertDialog.Builder builder = new AlertDialog.Builder(this);
-                  builder.setTitle("Configure Private Key (private_key.pem)");
-
-                  final EditText input = new EditText(this);
-                  input.setHint("Paste the full private_key.pem content here...");
-                  SharedPreferences prefs = getSharedPreferences("keygen_cfg", MODE_PRIVATE);
-                  input.setText(prefs.getString("priv_key", ""));
-                  builder.setView(input);
-
-                  builder.setPositiveButton("Save", (dialog, which) -> {
-                      String val = input.getText().toString().trim();
-                      prefs.edit().putString("priv_key", val).apply();
-                      updateKeyStatus();
-                      Toast.makeText(this, "Private key saved successfully!", Toast.LENGTH_SHORT).show();
-                  });
-                  builder.setNegativeButton("Cancel", null);
-                  builder.show();
-              }
-
-              private void showDatePicker() {
-                  Calendar c = Calendar.getInstance();
-                  new DatePickerDialog(this, (view, year, month, dayOfMonth) -> {
-                      selectedExpiry = String.format(Locale.US, "%04d-%02d-%02d", year, month + 1, dayOfMonth);
-                      tvSelectedDate.setText("Selected Expiry Date: " + selectedExpiry);
-                  }, c.get(Calendar.YEAR), c.get(Calendar.MONTH), c.get(Calendar.DAY_OF_MONTH)).show();
-              }
-
-              private void generateAndSaveKey() {
-                  String hwid = etHwid.getText().toString().trim().toUpperCase();
-                  String owner = etOwner.getText().toString().trim();
-                  if (owner.isEmpty()) owner = "Customer";
-                  String tier = spTier.getSelectedItem().toString();
-
-                  if (hwid.isEmpty()) {
-                      Toast.makeText(this, "Please enter customer HWID!", Toast.LENGTH_SHORT).show();
-                      return;
-                  }
-
-                  SharedPreferences prefs = getSharedPreferences("keygen_cfg", MODE_PRIVATE);
-                  String rawPem = prefs.getString("priv_key", "").trim();
-                  if (rawPem.isEmpty()) {
-                      Toast.makeText(this, "Please configure private key first using the button above!", Toast.LENGTH_LONG).show();
-                      showSetKeyDialog();
-                      return;
-                  }
-
-                  try {
-                      String cleanKey = rawPem.replace("-----BEGIN PRIVATE KEY-----", "")
-                                              .replace("-----END PRIVATE KEY-----", "")
-                                              .replace("-----BEGIN RSA PRIVATE KEY-----", "")
-                                              .replace("-----END RSA PRIVATE KEY-----", "")
-                                              .replaceAll("\\s+", "");
-
-                      byte[] keyBytes = Base64.decode(cleanKey, Base64.DEFAULT);
-                      PKCS8EncodedKeySpec spec = new PKCS8EncodedKeySpec(keyBytes);
-                      KeyFactory kf = KeyFactory.getInstance("RSA");
-                      PrivateKey priv = kf.generatePrivate(spec);
-
-                      JSONObject payload = new JSONObject();
-                      payload.put("hwid", hwid);
-                      payload.put("owner", owner);
-                      payload.put("expires_at", selectedExpiry);
-                      payload.put("tier", tier);
-
-                      byte[] payloadBytes = payload.toString().getBytes("UTF-8");
-
-                      Signature sig = Signature.getInstance("SHA256withRSA");
-                      sig.initSign(priv);
-                      sig.update(payloadBytes);
-                      byte[] sigBytes = sig.sign();
-
-                      String finalKey = Base64.encodeToString(payloadBytes, Base64.NO_WRAP) + "." + Base64.encodeToString(sigBytes, Base64.NO_WRAP);
-                      tvResultKey.setText(finalKey);
-
-                      saveDeviceRecord(hwid, owner, tier, selectedExpiry, finalKey);
-                      loadHistory();
-                      Toast.makeText(this, "License generated & device saved successfully!", Toast.LENGTH_SHORT).show();
-                  } catch (Exception e) {
-                      Toast.makeText(this, "Generation error: " + e.getMessage(), Toast.LENGTH_LONG).show();
-                  }
-              }
-
-              private void shareViaWhatsApp() {
-                  String key = tvResultKey.getText().toString().trim();
-                  if (key.isEmpty()) return;
-                  try {
-                      String msg = "Your Riders Soloution Pk Activation Key:\n\n" + key + "\n\nPaste this license key into the application and tap Activate.";
-                      Intent intent = new Intent(Intent.ACTION_VIEW);
-                      intent.setData(Uri.parse("https://api.whatsapp.com/send?phone=966547425565&text=" + URLEncoder.encode(msg, "UTF-8")));
-                      startActivity(intent);
-                  } catch (Exception e) {
-                      Toast.makeText(this, "Unable to launch WhatsApp", Toast.LENGTH_SHORT).show();
-                  }
-              }
-
-              private void saveDeviceRecord(String hwid, String owner, String tier, String expiry, String key) {
-                  SharedPreferences prefs = getSharedPreferences("keygen_db", Context.MODE_PRIVATE);
-                  try {
-                      JSONArray arr = new JSONArray(prefs.getString("devices", "[]"));
-                      JSONObject obj = new JSONObject();
-                      obj.put("hwid", hwid);
-                      obj.put("owner", owner);
-                      obj.put("tier", tier);
-                      obj.put("expiry", expiry);
-                      obj.put("key", key);
-                      obj.put("active", true);
-                      arr.put(obj);
-                      prefs.edit().putString("devices", arr.toString()).apply();
-                  } catch (Exception ignored) {}
-              }
-
-              private void loadHistory() {
-                  historyLayout.removeAllViews();
-                  SharedPreferences prefs = getSharedPreferences("keygen_db", Context.MODE_PRIVATE);
-                  try {
-                      JSONArray arr = new JSONArray(prefs.getString("devices", "[]"));
-                      for (int i = arr.length() - 1; i >= 0; i--) {
-                          JSONObject item = arr.getJSONObject(i);
-                          final int idx = i;
-                          LinearLayout card = new LinearLayout(this);
-                          card.setOrientation(LinearLayout.VERTICAL);
-                          card.setBackgroundColor(Color.parseColor("#1E1E1E"));
-                          card.setPadding(28, 24, 28, 24);
-                          LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
-                          lp.bottomMargin = 16;
-                          card.setLayoutParams(lp);
-
-                          boolean active = item.optBoolean("active", true);
-                          TextView info = new TextView(this);
-                          info.setText(item.optString("owner") + " (" + item.optString("tier") + ")" + "\nHWID: " + item.optString("hwid") + "\nExpiry: " + item.optString("expiry") + "\nStatus: " + (active ? "🟢 Active" : "🔴 Revoked"));
-                          info.setTextColor(active ? Color.WHITE : Color.parseColor("#FF5252"));
-                          info.setTextSize(14);
-                          card.addView(info);
-
-                          LinearLayout btns = new LinearLayout(this);
-                          btns.setOrientation(LinearLayout.HORIZONTAL);
-                          btns.setPadding(0, 12, 0, 0);
-
-                          Button btnCopy = new Button(this);
-                          btnCopy.setText("Copy Key");
-                          btnCopy.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
-                          btnCopy.setOnClickListener(v -> {
-                              ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                              cm.setPrimaryClip(ClipData.newPlainText("Key", item.optString("key")));
-                              Toast.makeText(MainActivity.this, "License key copied!", Toast.LENGTH_SHORT).show();
-                          });
-                          btns.addView(btnCopy);
-
-                          Button btnRevoke = new Button(this);
-                          btnRevoke.setText(active ? "Revoke Device" : "Reactivate");
-                          btnRevoke.setBackgroundColor(active ? Color.parseColor("#C62828") : Color.parseColor("#2E7D32"));
-                          btnRevoke.setTextColor(Color.WHITE);
-                          btnRevoke.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
-                          btnRevoke.setOnClickListener(v -> {
-                              try {
-                                  item.put("active", !active);
-                                  arr.put(idx, item);
-                                  prefs.edit().putString("devices", arr.toString()).apply();
-                                  loadHistory();
-                              } catch (Exception ignored) {}
-                          });
-                          btns.addView(btnRevoke);
-                          card.addView(btns);
-
-                          historyLayout.addView(card);
-                      }
-                  } catch (Exception ignored) {}
-              }
-          }
-          PYEOF
-          python3 -c "import textwrap; open('app/src/main/java/pk/riders/keygen/MainActivity.java', 'w').write(textwrap.dedent(open('app/src/main/java/pk/riders/keygen/MainActivity.java.raw').read()))"
-
-      # 7. تجميع وبناء تطبيق المولد APK
-      - name: Build KeyGen Release APK
+      # 10. تجميع وبناء الـ APK للتطبيق الرئيسي
+      - name: Build Protected Release APK
         run: |
           chmod +x gradlew
-          ./gradlew assembleRelease -x lint -x test --stacktrace --no-daemon 2>&1 | tee keygen_build.log
+          ./gradlew assembleRelease -x lint -x lintVitalRelease -x test --stacktrace --no-daemon 2>&1 | tee build_log.txt
           EXIT_CODE=${PIPESTATUS[0]}
           if [ $EXIT_CODE -ne 0 ]; then
-            echo "## ❌ Build Failure Details:" >> $GITHUB_STEP_SUMMARY
-            echo '```text' >> $GITHUB_STEP_SUMMARY
-            grep -B 2 -A 50 "FAILURE:" keygen_build.log >> $GITHUB_STEP_SUMMARY || tail -n 60 keygen_build.log >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
+            echo "## ❌ تفاصيل خطأ التجميع:" >> $GITHUB_STEP_SUMMARY
+            tail -n 60 build_log.txt >> $GITHUB_STEP_SUMMARY
             exit $EXIT_CODE
           fi
 
-      # 8. رفع ملف الـ APK النهائي إلى قسم Artifacts
-      - name: Upload KeyGen APK
+      # 11. رفع ملف الـ APK النهائي للتطبيق الرئيسي
+      - name: Upload Final Protected APK
         uses: actions/upload-artifact@v4
         with:
-          name: Riders-Soloution-Pk-KeyGen-APK
-          path: app/build/outputs/apk/**/*.apk
-          if-no-files-found: error
+          name: Riders-Soloution-Pk-Release-APK
+          path: app/build/outputs/apk/release/*.apk
+
+      # 12. رفع المفتاح الخاص للمطور لتوليد التراخيص
+      - name: Upload Developer Private Key
+        uses: actions/upload-artifact@v4
+        with:
+          name: Developer-Private-Key-DO-NOT-SHARE
+          path: keys_output/private_key.pem
