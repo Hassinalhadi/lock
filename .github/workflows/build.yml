@@ -1,4 +1,4 @@
-name: Build RiyadhRiders KeyGen APK
+name: Build Riders Soloution Pk KeyGen APK
 
 on:
   workflow_dispatch:
@@ -44,14 +44,14 @@ jobs:
           rm -rf app/src/main/resources
           rm -rf app/build
 
-          mkdir -p app/src/main/java/sa/riyadh/keygen
+          mkdir -p app/src/main/java/pk/riders/keygen
           mkdir -p app/src/main/res/values
 
           # ملف AndroidManifest.xml بالإنجليزية
           cat << 'PYEOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
-              package="sa.riyadh.keygen">
+              package="pk.riders.keygen">
 
               <application
                   android:allowBackup="true"
@@ -74,7 +74,7 @@ jobs:
           # ملف strings.xml
           cat << 'PYEOF' > app/src/main/res/values/strings.xml
           <resources>
-              <string name="app_name">RiyadhRiders KeyGen PRO</string>
+              <string name="app_name">Riders Soloution Pk KeyGen</string>
           </resources>
           PYEOF
 
@@ -85,11 +85,11 @@ jobs:
           }
 
           android {
-              namespace 'sa.riyadh.keygen'
+              namespace 'pk.riders.keygen'
               compileSdk 34
 
               defaultConfig {
-                  applicationId "sa.riyadh.keygen"
+                  applicationId "pk.riders.keygen"
                   minSdk 24
                   targetSdk 34
                   versionCode 1
@@ -127,13 +127,13 @@ jobs:
             -validity 10000 \
             -storepass "pass123456" \
             -keypass "pass123456" \
-            -dname "CN=KeyGen, O=RiyadhRiders, C=SA"
+            -dname "CN=KeyGen, O=RidersSoloutionPk, C=SA"
 
-      # 6. كتابة كود تطبيق المولد كاملاً باللغة الإنجليزية
+      # 6. كتابة كود تطبيق المولد كاملاً باللغة الإنجليزية وواتساب فقط
       - name: Write KeyGen MainActivity
         run: |
-          cat << 'PYEOF' > app/src/main/java/sa/riyadh/keygen/MainActivity.java.raw
-          package sa.riyadh.keygen;
+          cat << 'PYEOF' > app/src/main/java/pk/riders/keygen/MainActivity.java.raw
+          package pk.riders.keygen;
 
           import android.app.Activity;
           import android.app.AlertDialog;
@@ -181,7 +181,7 @@ jobs:
                   root.setPadding(40, 50, 40, 60);
 
                   TextView title = new TextView(this);
-                  title.setText("RiyadhRiders KeyGen PRO");
+                  title.setText("Riders Soloution Pk KeyGen");
                   title.setTextSize(22);
                   title.setTextColor(Color.parseColor("#00E676"));
                   title.setGravity(Gravity.CENTER);
@@ -300,21 +300,14 @@ jobs:
                   });
                   actionBtns.addView(btnCopy);
 
+                  # زر واتساب بالرقم الجديد والرسالة التلقائية المسبقة (بدون تليجرام)
                   Button btnWa = new Button(this);
-                  btnWa.setText("💬 WhatsApp");
+                  btnWa.setText("💬 WhatsApp (+966547425565)");
                   btnWa.setBackgroundColor(Color.parseColor("#25D366"));
                   btnWa.setTextColor(Color.WHITE);
-                  btnWa.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
+                  btnWa.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 2.0f));
                   btnWa.setOnClickListener(v -> shareViaWhatsApp());
                   actionBtns.addView(btnWa);
-
-                  Button btnTg = new Button(this);
-                  btnTg.setText("✈️ Telegram");
-                  btnTg.setBackgroundColor(Color.parseColor("#0088CC"));
-                  btnTg.setTextColor(Color.WHITE);
-                  btnTg.setLayoutParams(new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f));
-                  btnTg.setOnClickListener(v -> shareViaTelegram());
-                  actionBtns.addView(btnTg);
                   root.addView(actionBtns);
 
                   TextView historyHeader = new TextView(this);
@@ -456,29 +449,12 @@ jobs:
                   String key = tvResultKey.getText().toString().trim();
                   if (key.isEmpty()) return;
                   try {
-                      String msg = "Your RiyadhRiders PRO Activation Key:\n\n" + key + "\n\nPaste this license key into the application and tap Activate.";
+                      String msg = "Your Riders Soloution Pk Activation Key:\n\n" + key + "\n\nPaste this license key into the application and tap Activate.";
                       Intent intent = new Intent(Intent.ACTION_VIEW);
-                      intent.setData(Uri.parse("https://api.whatsapp.com/send?text=" + URLEncoder.encode(msg, "UTF-8")));
+                      intent.setData(Uri.parse("https://api.whatsapp.com/send?phone=966547425565&text=" + URLEncoder.encode(msg, "UTF-8")));
                       startActivity(intent);
                   } catch (Exception e) {
                       Toast.makeText(this, "Unable to launch WhatsApp", Toast.LENGTH_SHORT).show();
-                  }
-              }
-
-              private void shareViaTelegram() {
-                  String key = tvResultKey.getText().toString().trim();
-                  if (key.isEmpty()) return;
-                  try {
-                      Intent intent = new Intent(Intent.ACTION_SEND);
-                      intent.setType("text/plain");
-                      intent.setPackage("org.telegram.messenger");
-                      intent.putExtra(Intent.EXTRA_TEXT, "RiyadhRiders Activation Key:\n" + key);
-                      startActivity(intent);
-                  } catch (Exception e) {
-                      Intent intent = new Intent(Intent.ACTION_SEND);
-                      intent.setType("text/plain");
-                      intent.putExtra(Intent.EXTRA_TEXT, "RiyadhRiders Activation Key:\n" + key);
-                      startActivity(Intent.createChooser(intent, "Share via:"));
                   }
               }
 
@@ -557,7 +533,7 @@ jobs:
               }
           }
           PYEOF
-          python3 -c "import textwrap; open('app/src/main/java/sa/riyadh/keygen/MainActivity.java', 'w').write(textwrap.dedent(open('app/src/main/java/sa/riyadh/keygen/MainActivity.java.raw').read()))"
+          python3 -c "import textwrap; open('app/src/main/java/pk/riders/keygen/MainActivity.java', 'w').write(textwrap.dedent(open('app/src/main/java/pk/riders/keygen/MainActivity.java.raw').read()))"
 
       # 7. تجميع وبناء تطبيق المولد APK
       - name: Build KeyGen Release APK
@@ -568,7 +544,7 @@ jobs:
           if [ $EXIT_CODE -ne 0 ]; then
             echo "## ❌ Build Failure Details:" >> $GITHUB_STEP_SUMMARY
             echo '```text' >> $GITHUB_STEP_SUMMARY
-            grep -B 2 -A 50 "FAILURE:" keygen_build.log >> $GITHUB_STEP_SUMMARY || tail -n 60 keygen_build.log >>$GITHUB_STEP_SUMMARY
+            grep -B 2 -A 50 "FAILURE:" keygen_build.log >> $GITHUB_STEP_SUMMARY || tail -n 60 keygen_build.log >> $GITHUB_STEP_SUMMARY
             echo '```' >> $GITHUB_STEP_SUMMARY
             exit $EXIT_CODE
           fi
@@ -577,6 +553,6 @@ jobs:
       - name: Upload KeyGen APK
         uses: actions/upload-artifact@v4
         with:
-          name: RiyadhRiders-KeyGen-APK
+          name: Riders-Soloution-Pk-KeyGen-APK
           path: app/build/outputs/apk/**/*.apk
           if-no-files-found: error
