@@ -25,7 +25,6 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      # 3. إعداد بيئة بايثون وتثبيت المكتبات
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -34,22 +33,26 @@ jobs:
       - name: Install Python Libraries
         run: pip install cryptography Pillow pyyaml
 
-      # 4. مزامنة المستودعات وتحديث السيرفرات الرسمية
+      # 3. مزامنة المستودعات وتحديث السيرفرات الرسمية
       - name: Sync Submodules & Clean Repositories
         run: |
           git submodule sync --recursive
           git submodule update --init --recursive --force
           git submodule foreach --recursive git reset --hard
           git submodule foreach --recursive git clean -fdx
+          find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
+          find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/public|https://repo1.maven.org/maven2|g' {} +
+          find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/jcenter|https://repo1.maven.org/maven2|g' {} +
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
 
-      # 5. معالجة وتوليد أيقونة وشعار Riders Soloution Pk
+      # 4. معالجة وتوليد أيقونة وشعار Riders Soloution Pk وأيقونة واتساب
       - name: Create App Icons and WhatsApp Vector
         run: |
           cat << 'PYEOF' > process_icon.py.raw
           import os, glob, shutil
           from PIL import Image
 
+          # حذف الأيقونات القديمة لتجنب تكرار الموارد
           for f in glob.glob('app/src/main/res/mipmap*/*launcher*'):
               try: os.remove(f)
               except Exception: pass
@@ -89,7 +92,7 @@ jobs:
           python3 -c "import textwrap; open('process_icon.py', 'w').write(textwrap.dedent(open('process_icon.py.raw').read()))"
           python3 process_icon.py
 
-      # 6. تعديل الاسم إلى Riders Soloution Pk وحصر التواصل على الواتساب فقط
+      # 5. تعديل الاسم إلى Riders Soloution Pk وحصر التواصل على الواتساب فقط
       - name: Apply Branding and Exclude Telegram
         run: |
           cat << 'PYEOF' > rebrand_ui.py.raw
@@ -102,9 +105,9 @@ jobs:
               with open('app/build.gradle', 'r', encoding='utf-8', errors='ignore') as f:
                   bg = f.read()
               bg = re.sub(r'applicationId\s+.*', 'applicationId "riders.soloution.pk"', bg)
-              if 'resourceConfigurations' not in bg:
-                  bg = re.sub(r'(defaultConfig\s*\{)', r'\1\n        resourceConfigurations += ["en", "ar"]', bg)
-              with open('app/build.gradle', 'w') as f:
+              if 'resConfigs' not in bg:
+                  bg = re.sub(r'(defaultConfig\s*\{)', r"\1\n        resConfigs 'en', 'ar'", bg)
+              with open('app/build.gradle', 'w', encoding='utf-8') as f:
                   f.write(bg)
 
           for sp in glob.glob('app/src/main/res/values*/strings.xml'):
@@ -172,7 +175,7 @@ jobs:
           python3 -c "import textwrap; open('rebrand_ui.py', 'w').write(textwrap.dedent(open('rebrand_ui.py.raw').read()))"
           python3 rebrand_ui.py
 
-      # 7. توليد مفاتيح تشفير التراخيص RSA-2048
+      # 6. توليد مفاتيح تشفير التراخيص RSA-2048
       - name: Generate RSA Cryptographic Keys
         run: |
           mkdir -p keys_output
@@ -193,7 +196,7 @@ jobs:
           python3 gen_keys.py
           echo "PUB_KEY=$(cat keys_output/public_key_clean.txt)" >> $GITHUB_ENV
 
-      # 8. حقن نظام الحماية وشاشة التفعيل مع زر الواتساب فقط
+      # 7. حقن نظام الحماية وشاشة التفعيل مع زر الواتساب فقط
       - name: Inject Security Protection and Activation UI
         run: |
           cat << 'PYEOF' > inject_ui.py.raw
@@ -518,7 +521,7 @@ jobs:
           python3 -c "import textwrap; open('inject_ui.py', 'w').write(textwrap.dedent(open('inject_ui.py.raw').read()))"
           python3 inject_ui.py
 
-      # 9. قواعد ProGuard وتجاهل تحذيرات Xposed
+      # 8. قواعد ProGuard وتجاهل تحذيرات Xposed
       - name: Configure ProGuard Rules
         run: |
           mkdir -p app
@@ -533,7 +536,7 @@ jobs:
           -keep class io.github.zensu357.camswap.LicenseManager { *; }
           EOF
 
-      # 10. إعداد شهادة التوقيع الرسمية
+      # 9. إعداد شهادة التوقيع الرسمية (بشكل نظيف وبدون تكرار الأسطر)
       - name: Configure Automatic Release Signing in Gradle
         run: |
           mkdir -p app
@@ -561,44 +564,3 @@ jobs:
               }
           '''
           if 'signingConfigs' not in content:
-              content = content.replace('buildTypes {', signing_cfg + '\n    buildTypes {')
-              content = content.replace('release {', 'release {\n            signingConfig signingConfigs.release')
-              with open('app/build.gradle', 'w') as f:
-                  f.write(content)
-          PYEOF
-          python3 -c "import textwrap; open('setup_signing.py', 'w').write(textwrap.dedent(open('setup_signing.py.raw').read()))"
-          python3 setup_signing.py
-
-      # 11. تجميع وبناء الـ APK للتطبيق الأساسي
-      - name: Build Protected Release APK
-        run: |
-          chmod +x gradlew
-          ./gradlew assembleRelease -x lint -x lintVitalRelease -x test --stacktrace --no-daemon 2>&1 | tee build_log.txt
-          EXIT_CODE=${PIPESTATUS[0]}
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "## ❌ Build Failure Details:" >> $GITHUB_STEP_SUMMARY
-            tail -n 60 build_log.txt >> $GITHUB_STEP_SUMMARY
-            exit $EXIT_CODE
-          fi
-
-      # 12. التحقق من موقع ملفات الـ APK
-      - name: Locate Output APK Files
-        run: |
-          echo "=== APK Files Found ==="
-          find app/build/outputs/ -name "*.apk"
-          ls -la keys_output/
-
-      # 13. رفع ملف الـ APK النهائي للتطبيق الأساسي
-      - name: Upload Final Protected APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: Riders-Soloution-Pk-Release-APK
-          path: app/build/outputs/apk/**/*.apk
-          if-no-files-found: error
-
-      # 14. رفع المفتاح الخاص للمطور
-      - name: Upload Developer Private Key
-        uses: actions/upload-artifact@v4
-        with:
-          name: Developer-Private-Key-DO-NOT-SHARE
-          path: keys_output/private_key.pem
