@@ -33,23 +33,26 @@ jobs:
       - name: Install Python Libraries
         run: pip install cryptography Pillow pyyaml
 
-      # 3. استرجاع مكتبة Dobby وتعديل المستودعات
+      # 3. مزامنة المستودعات وتحديث السيرفرات الرسمية
       - name: Sync Submodules & Clean Repositories
         run: |
           git submodule sync --recursive
           git submodule update --init --recursive --force
           git submodule foreach --recursive git reset --hard
           git submodule foreach --recursive git clean -fdx
+          find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
+          find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/public|https://repo1.maven.org/maven2|g' {} +
+          find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/jcenter|https://repo1.maven.org/maven2|g' {} +
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
 
       # 4. معالجة وتوليد أيقونة وشعار Riders Soloution Pk وأيقونة واتساب
-      - name: Create App Icons and Assets
+      - name: Create App Icons and WhatsApp Vector
         run: |
           cat << 'PYEOF' > process_icon.py.raw
           import os, glob, shutil
           from PIL import Image
 
-          # حذف الأيقونات القديمة لمنع تكرار الموارد
+          # حذف الأيقونات القديمة لتجنب تكرار الموارد
           for f in glob.glob('app/src/main/res/mipmap*/*launcher*'):
               try: os.remove(f)
               except Exception: pass
@@ -57,7 +60,6 @@ jobs:
           if os.path.exists('app/src/main/res/mipmap-anydpi-v26'):
               shutil.rmtree('app/src/main/res/mipmap-anydpi-v26', ignore_errors=True)
 
-          # قراءة صورة الشعار المرفوعة في المستودع
           img_file = None
           for f in sorted(os.listdir('.')):
               if f.lower().endswith(('.png', '.jpg', '.jpeg')) and not f.startswith('.'):
@@ -71,14 +73,13 @@ jobs:
 
               densities = {'mipmap-mdpi': 48, 'mipmap-hdpi': 72, 'mipmap-xhdpi': 96, 'mipmap-xxhdpi': 144, 'mipmap-xxxhdpi': 192}
               for folder, sz in densities.items():
-                  target = os.path.join('app/src/main/res', folder)
-                  os.makedirs(target, exist_ok=True)
+                  dest = os.path.join('app/src/main/res', folder)
+                  os.makedirs(dest, exist_ok=True)
                   resized = im.resize((sz, sz), Image.Resampling.LANCZOS)
-                  resized.save(os.path.join(target, 'ic_launcher.png'))
-                  resized.save(os.path.join(target, 'ic_launcher_round.png'))
+                  resized.save(os.path.join(dest, 'ic_launcher.png'))
+                  resized.save(os.path.join(dest, 'ic_launcher_round.png'))
               print("Icons generated successfully.")
 
-          # إضافة أيقونة واتساب رسمية بصيغة Vector
           wa_vector = """<vector xmlns:android="http://schemas.android.com/apk/res/android"
               android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
             <path android:fillColor="#25D366"
@@ -91,27 +92,24 @@ jobs:
           python3 -c "import textwrap; open('process_icon.py', 'w').write(textwrap.dedent(open('process_icon.py.raw').read()))"
           python3 process_icon.py
 
-      # 5. تعديل الحقوق والاسم وحصر التواصل على الواتساب فقط
+      # 5. تعديل الاسم إلى Riders Soloution Pk وحصر التواصل على الواتساب فقط
       - name: Apply Branding and Exclude Telegram
         run: |
           cat << 'PYEOF' > rebrand_ui.py.raw
           import os, re, shutil, glob
 
-          # حذف ملفات الصينية
           for zh in glob.glob('app/src/main/res/values-zh*'):
               shutil.rmtree(zh, ignore_errors=True)
 
-          # ضبط معرف الحزمة واللغات
           if os.path.exists('app/build.gradle'):
               with open('app/build.gradle', 'r', encoding='utf-8', errors='ignore') as f:
                   bg = f.read()
               bg = re.sub(r'applicationId\s+.*', 'applicationId "riders.soloution.pk"', bg)
-              if 'resourceConfigurations' not in bg:
-                  bg = re.sub(r'(defaultConfig\s*\{)', r'\1\n        resourceConfigurations += ["en", "ar"]', bg)
+              if 'resConfigs' not in bg:
+                  bg = re.sub(r'(defaultConfig\s*\{)', r"\1\n        resConfigs 'en', 'ar'", bg)
               with open('app/build.gradle', 'w', encoding='utf-8') as f:
                   f.write(bg)
 
-          # تحديث نصوص التطبيق واستبدال التليجرام بواتساب
           for sp in glob.glob('app/src/main/res/values*/strings.xml'):
               with open(sp, 'r', encoding='utf-8', errors='ignore') as f:
                   st = f.read()
@@ -122,7 +120,6 @@ jobs:
               with open(sp, 'w', encoding='utf-8') as f:
                   f.write(st)
 
-          # ملف الترجمة العربية values-ar
           ar_dir = 'app/src/main/res/values-ar'
           os.makedirs(ar_dir, exist_ok=True)
           ar_strings = """<?xml version="1.0" encoding="utf-8"?>
@@ -144,7 +141,6 @@ jobs:
           with open(os.path.join(ar_dir, 'strings.xml'), 'w', encoding='utf-8') as f:
               f.write(ar_strings)
 
-          # استبدال روابط GitHub وتليجرام برابط واتساب المباشر فقط
           wa_url = "https://api.whatsapp.com/send?phone=966547425565"
           for root, dirs, files in os.walk('app/src/main/java'):
               for file in files:
@@ -200,7 +196,7 @@ jobs:
           python3 gen_keys.py
           echo "PUB_KEY=$(cat keys_output/public_key_clean.txt)" >> $GITHUB_ENV
 
-      # 7. حقن نظام الحماية وشاشة التفعيل
+      # 7. حقن نظام الحماية وشاشة التفعيل مع زر الواتساب فقط
       - name: Inject Security Protection and Activation UI
         run: |
           cat << 'PYEOF' > inject_ui.py.raw
@@ -479,7 +475,7 @@ jobs:
                       return
                   }
                   """
-                  m_code = m_code.replace('super.onCreate(savedInstanceState)', 'super.onCreate(savedInstanceState)\\n' + lock_k)
+                  m_code = m_code.replace('super.onCreate(savedInstanceState)', 'super.onCreate(savedInstanceState)\n' + lock_k)
                   with open(main_kt, 'w') as f: f.write(m_code)
 
           main_java = os.path.join(target_dir, 'MainActivity.java')
@@ -495,7 +491,7 @@ jobs:
                       return;
                   }
                   """
-                  mj_code = mj_code.replace('super.onCreate(savedInstanceState);', 'super.onCreate(savedInstanceState);\\n' + lock_j)
+                  mj_code = mj_code.replace('super.onCreate(savedInstanceState);', 'super.onCreate(savedInstanceState);\n' + lock_j)
                   with open(main_java, 'w') as f: f.write(mj_code)
 
           manifest_path = 'app/src/main/AndroidManifest.xml'
@@ -508,7 +504,7 @@ jobs:
                       android:exported="true"
                       android:label="Riders Soloution Pk" />
                   '''
-                  m_cnt = m_cnt.replace('</application>', act_decl + '\\n    </application>')
+                  m_cnt = m_cnt.replace('</application>', act_decl + '\n    </application>')
                   with open(manifest_path, 'w') as f: f.write(m_cnt)
 
           hook_path = os.path.join(target_dir, 'HookMain.java')
@@ -517,8 +513,8 @@ jobs:
               h_cnt = re.sub(r'MODULE_PACKAGE = "[^"]+"', 'MODULE_PACKAGE = "riders.soloution.pk"', h_cnt)
               if 'isSystemLicensed' not in h_cnt:
                   h_cnt = h_cnt.replace(
-                      'if (lpparam.packageName.equals(MODULE_PACKAGE)) {\\n            return;\\n        }',
-                      'if (lpparam.packageName.equals(MODULE_PACKAGE)) {\\n            return;\\n        }\\n\\n        if (!LicenseManager.isSystemLicensed()) {\\n            return;\\n        }'
+                      'if (lpparam.packageName.equals(MODULE_PACKAGE)) {\n            return;\n        }',
+                      'if (lpparam.packageName.equals(MODULE_PACKAGE)) {\n            return;\n        }\n\n        if (!LicenseManager.isSystemLicensed()) {\n            return;\n        }'
                   )
               with open(hook_path, 'w') as f: f.write(h_cnt)
           PYEOF
@@ -540,7 +536,7 @@ jobs:
           -keep class io.github.zensu357.camswap.LicenseManager { *; }
           EOF
 
-      # 9. إعداد شهادة التوقيع الرسمية
+      # 9. إعداد شهادة التوقيع الرسمية (بشكل نظيف وبدون تكرار الأسطر)
       - name: Configure Automatic Release Signing in Gradle
         run: |
           mkdir -p app
@@ -554,7 +550,7 @@ jobs:
             -keypass "pass123456" \
             -dname "CN=RidersSoloutionPk, O=Dev, C=SA"
 
-          python3 - << 'EOF'
+          cat << 'PYEOF' > setup_signing.py.raw
           with open('app/build.gradle', 'r') as f:
               content = f.read()
           signing_cfg = '''
@@ -568,11 +564,13 @@ jobs:
               }
           '''
           if 'signingConfigs' not in content:
-              content = content.replace('buildTypes {', signing_cfg + '\n    buildTypes {')
-              content = content.replace('release {', 'release {\n            signingConfig signingConfigs.release')
+              content = content.replace('release {', 'release {\n            signingConfig signingConfigs.release', 1)
+              content = content.replace('buildTypes {', signing_cfg + '\n    buildTypes {', 1)
               with open('app/build.gradle', 'w') as f:
                   f.write(content)
-          EOF
+          PYEOF
+          python3 -c "import textwrap; open('setup_signing.py', 'w').write(textwrap.dedent(open('setup_signing.py.raw').read()))"
+          python3 setup_signing.py
 
       # 10. تجميع وبناء الـ APK للتطبيق الأساسي
       - name: Build Protected Release APK
@@ -581,19 +579,29 @@ jobs:
           ./gradlew assembleRelease -x lint -x lintVitalRelease -x test --stacktrace --no-daemon 2>&1 | tee build_log.txt
           EXIT_CODE=${PIPESTATUS[0]}
           if [ $EXIT_CODE -ne 0 ]; then
-            echo "## ❌ Build Failure Details:" >> $GITHUB_STEP_SUMMARY
-            tail -n 60 build_log.txt >> $GITHUB_STEP_SUMMARY
+            echo "## ❌ تفاصيل خطأ التجميع:" >> $GITHUB_STEP_SUMMARY
+            echo '```text' >> $GITHUB_STEP_SUMMARY
+            grep -B 2 -A 35 "FAILURE: Build failed with an exception." build_log.txt >> $GITHUB_STEP_SUMMARY || tail -n 60 build_log.txt >> $GITHUB_STEP_SUMMARY
+            echo '```' >> $GITHUB_STEP_SUMMARY
             exit $EXIT_CODE
           fi
 
-      # 11. رفع ملف الـ APK النهائي للتطبيق الأساسي
+      # 11. التأكد من وجود ملفات الـ APK
+      - name: Locate Output APK Files
+        run: |
+          echo "=== ملفات الـ APK الناتجة ==="
+          find app/build/outputs/ -name "*.apk"
+          ls -la keys_output/
+
+      # 12. رفع ملف الـ APK النهائي للتطبيق الأساسي
       - name: Upload Final Protected APK
         uses: actions/upload-artifact@v4
         with:
           name: Riders-Soloution-Pk-Release-APK
-          path: app/build/outputs/apk/release/*.apk
+          path: app/build/outputs/apk/**/*.apk
+          if-no-files-found: error
 
-      # 12. رفع المفتاح الخاص للمطور
+      # 13. رفع المفتاح الخاص للمطور
       - name: Upload Developer Private Key
         uses: actions/upload-artifact@v4
         with:
