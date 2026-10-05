@@ -33,7 +33,7 @@ jobs:
       - name: Install Python Libraries
         run: pip install cryptography Pillow pyyaml
 
-      # 3. مزامنة الفروع الفرعية وتعديل المستودعات
+      # 3. استرجاع مكتبة Dobby وتعديل المستودعات
       - name: Sync Submodules & Clean Repositories
         run: |
           git submodule sync --recursive
@@ -43,9 +43,9 @@ jobs:
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
 
       # 4. معالجة وتوليد أيقونة وشعار Riders Soloution Pk وأيقونة واتساب
-      - name: Create App Icons and WhatsApp Vector
+      - name: Create App Icons and Assets
         run: |
-          python3 - << 'PYEOF'
+          cat << 'PYEOF' > process_icon.py.raw
           import os, glob, shutil
           from PIL import Image
 
@@ -57,27 +57,28 @@ jobs:
           if os.path.exists('app/src/main/res/mipmap-anydpi-v26'):
               shutil.rmtree('app/src/main/res/mipmap-anydpi-v26', ignore_errors=True)
 
-          # قراءة صورة الشعار الجديدة من المستودع
-          target_img = None
+          # قراءة صورة الشعار المرفوعة في المستودع
+          img_file = None
           for f in sorted(os.listdir('.')):
               if f.lower().endswith(('.png', '.jpg', '.jpeg')) and not f.startswith('.'):
-                  target_img = f
+                  img_file = f
                   break
 
-          if target_img:
-              im = Image.open(target_img).convert('RGBA')
+          if img_file:
+              im = Image.open(img_file).convert('RGBA')
               os.makedirs('app/src/main/res/drawable', exist_ok=True)
               im.resize((512, 512), Image.Resampling.LANCZOS).save('app/src/main/res/drawable/app_logo.png')
 
               densities = {'mipmap-mdpi': 48, 'mipmap-hdpi': 72, 'mipmap-xhdpi': 96, 'mipmap-xxhdpi': 144, 'mipmap-xxxhdpi': 192}
               for folder, sz in densities.items():
-                  dest = os.path.join('app/src/main/res', folder)
-                  os.makedirs(dest, exist_ok=True)
+                  target = os.path.join('app/src/main/res', folder)
+                  os.makedirs(target, exist_ok=True)
                   resized = im.resize((sz, sz), Image.Resampling.LANCZOS)
-                  resized.save(os.path.join(dest, 'ic_launcher.png'))
-                  resized.save(os.path.join(dest, 'ic_launcher_round.png'))
+                  resized.save(os.path.join(target, 'ic_launcher.png'))
+                  resized.save(os.path.join(target, 'ic_launcher_round.png'))
+              print("Icons generated successfully.")
 
-          # رسم أيقونة واتساب رسمية بصيغة Vector
+          # إضافة أيقونة واتساب رسمية بصيغة Vector
           wa_vector = """<vector xmlns:android="http://schemas.android.com/apk/res/android"
               android:width="24dp" android:height="24dp" android:viewportWidth="24" android:viewportHeight="24">
             <path android:fillColor="#25D366"
@@ -87,14 +88,16 @@ jobs:
           with open('app/src/main/res/drawable/ic_whatsapp.xml', 'w') as f:
               f.write(wa_vector)
           PYEOF
+          python3 -c "import textwrap; open('process_icon.py', 'w').write(textwrap.dedent(open('process_icon.py.raw').read()))"
+          python3 process_icon.py
 
-      # 5. تعديل الهوية إلى Riders Soloution Pk وحصر التواصل على الواتساب فقط
+      # 5. تعديل الحقوق والاسم وحصر التواصل على الواتساب فقط
       - name: Apply Branding and Exclude Telegram
         run: |
-          python3 - << 'PYEOF'
+          cat << 'PYEOF' > rebrand_ui.py.raw
           import os, re, shutil, glob
 
-          # حذف الصينية بالكامل
+          # حذف ملفات الصينية
           for zh in glob.glob('app/src/main/res/values-zh*'):
               shutil.rmtree(zh, ignore_errors=True)
 
@@ -105,7 +108,7 @@ jobs:
               bg = re.sub(r'applicationId\s+.*', 'applicationId "riders.soloution.pk"', bg)
               if 'resourceConfigurations' not in bg:
                   bg = re.sub(r'(defaultConfig\s*\{)', r'\1\n        resourceConfigurations += ["en", "ar"]', bg)
-              with open('app/build.gradle', 'w') as f:
+              with open('app/build.gradle', 'w', encoding='utf-8') as f:
                   f.write(bg)
 
           # تحديث نصوص التطبيق واستبدال التليجرام بواتساب
@@ -119,8 +122,30 @@ jobs:
               with open(sp, 'w', encoding='utf-8') as f:
                   f.write(st)
 
-          # استبدال الروابط بواتساب في جميع الأكواد
-          wa_link = "https://api.whatsapp.com/send?phone=966547425565"
+          # ملف الترجمة العربية values-ar
+          ar_dir = 'app/src/main/res/values-ar'
+          os.makedirs(ar_dir, exist_ok=True)
+          ar_strings = """<?xml version="1.0" encoding="utf-8"?>
+          <resources>
+              <string name="app_name">Riders Soloution Pk</string>
+              <string name="module_not_active">الموديول غير مفعل</string>
+              <string name="module_not_active_desc">يرجى تفعيل الموديول في تطبيق LSPosed وإعادة تشغيل الهاتف</string>
+              <string name="current_version">الإصدار الحالي</string>
+              <string name="latest_version">النسخة الرسمية</string>
+              <string name="check_github">نسخة رسمية ومفعلة</string>
+              <string name="support">الدعم الفني عبر واتساب</string>
+              <string name="github_issues">واتساب: +966547425565</string>
+              <string name="telegram_channel">واتساب: 0547425565</string>
+              <string name="home">الرئيسية</string>
+              <string name="manage">إدارة الوسائط</string>
+              <string name="settings">الإعدادات</string>
+          </resources>
+          """
+          with open(os.path.join(ar_dir, 'strings.xml'), 'w', encoding='utf-8') as f:
+              f.write(ar_strings)
+
+          # استبدال روابط GitHub وتليجرام برابط واتساب المباشر فقط
+          wa_url = "https://api.whatsapp.com/send?phone=966547425565"
           for root, dirs, files in os.walk('app/src/main/java'):
               for file in files:
                   if file.endswith(('.kt', '.java')):
@@ -128,8 +153,8 @@ jobs:
                       with open(fp, 'r', encoding='utf-8', errors='ignore') as f:
                           code = f.read()
                       orig = code
-                      code = re.sub(r'https?://github\.com/[a-zA-Z0-9_\-\./]+', wa_link, code)
-                      code = re.sub(r'https?://t\.me/[a-zA-Z0-9_\-]+', wa_link, code)
+                      code = re.sub(r'https?://github\.com/[a-zA-Z0-9_\-\./]+', wa_url, code)
+                      code = re.sub(r'https?://t\.me/[a-zA-Z0-9_\-]+', wa_url, code)
                       code = code.replace('"CamSwap"', '"Riders Soloution Pk"')
                       code = code.replace('"RiyadhRiders"', '"Riders Soloution Pk"')
                       code = code.replace('Join Telegram Channel', 'WhatsApp: 0547425565')
@@ -151,12 +176,14 @@ jobs:
               with open(sc, 'w', encoding='utf-8') as f:
                   f.write('riders.soloution.pk\n')
           PYEOF
+          python3 -c "import textwrap; open('rebrand_ui.py', 'w').write(textwrap.dedent(open('rebrand_ui.py.raw').read()))"
+          python3 rebrand_ui.py
 
       # 6. توليد مفاتيح تشفير التراخيص RSA-2048
       - name: Generate RSA Cryptographic Keys
         run: |
           mkdir -p keys_output
-          python3 - << 'PYEOF'
+          cat << 'PYEOF' > gen_keys.py.raw
           from cryptography.hazmat.primitives.asymmetric import rsa
           from cryptography.hazmat.primitives import serialization
           import base64
@@ -169,12 +196,14 @@ jobs:
           with open('keys_output/public_key_clean.txt', 'w') as f:
               f.write(clean_pub)
           PYEOF
+          python3 -c "import textwrap; open('gen_keys.py', 'w').write(textwrap.dedent(open('gen_keys.py.raw').read()))"
+          python3 gen_keys.py
           echo "PUB_KEY=$(cat keys_output/public_key_clean.txt)" >> $GITHUB_ENV
 
       # 7. حقن نظام الحماية وشاشة التفعيل
       - name: Inject Security Protection and Activation UI
         run: |
-          python3 - << 'PYEOF'
+          cat << 'PYEOF' > inject_ui.py.raw
           import os, re
 
           pub_key = os.environ.get('PUB_KEY', '')
@@ -441,7 +470,7 @@ jobs:
           if os.path.exists(main_kt):
               with open(main_kt, 'r') as f: m_code = f.read()
               if 'ActivationActivity' not in m_code:
-                  lock_k = '''
+                  lock_k = """
                   val licInfo = LicenseManager.checkSavedLicense(this)
                   if (!licInfo.isValid) {
                       val intent = android.content.Intent(this, ActivationActivity::class.java)
@@ -449,7 +478,7 @@ jobs:
                       finish()
                       return
                   }
-                  '''
+                  """
                   m_code = m_code.replace('super.onCreate(savedInstanceState)', 'super.onCreate(savedInstanceState)\\n' + lock_k)
                   with open(main_kt, 'w') as f: f.write(m_code)
 
@@ -457,7 +486,7 @@ jobs:
           if os.path.exists(main_java):
               with open(main_java, 'r') as f: mj_code = f.read()
               if 'ActivationActivity' not in mj_code:
-                  lock_j = '''
+                  lock_j = """
                   LicenseManager.LicenseInfo licInfo = LicenseManager.checkSavedLicense(this);
                   if (!licInfo.isValid) {
                       android.content.Intent intent = new android.content.Intent(this, ActivationActivity.class);
@@ -465,7 +494,7 @@ jobs:
                       finish();
                       return;
                   }
-                  '''
+                  """
                   mj_code = mj_code.replace('super.onCreate(savedInstanceState);', 'super.onCreate(savedInstanceState);\\n' + lock_j)
                   with open(main_java, 'w') as f: f.write(mj_code)
 
@@ -493,8 +522,10 @@ jobs:
                   )
               with open(hook_path, 'w') as f: f.write(h_cnt)
           PYEOF
+          python3 -c "import textwrap; open('inject_ui.py', 'w').write(textwrap.dedent(open('inject_ui.py.raw').read()))"
+          python3 inject_ui.py
 
-      # 8. قواعد ProGuard
+      # 8. قواعد ProGuard وتجاهل تحذيرات Xposed
       - name: Configure ProGuard Rules
         run: |
           mkdir -p app
@@ -509,7 +540,7 @@ jobs:
           -keep class io.github.zensu357.camswap.LicenseManager { *; }
           EOF
 
-      # 9. إعداد شهادة التوقيع
+      # 9. إعداد شهادة التوقيع الرسمية
       - name: Configure Automatic Release Signing in Gradle
         run: |
           mkdir -p app
@@ -543,26 +574,26 @@ jobs:
                   f.write(content)
           EOF
 
-      # 10. تجميع وبناء الـ APK للتطبيق الرئيسي
+      # 10. تجميع وبناء الـ APK للتطبيق الأساسي
       - name: Build Protected Release APK
         run: |
           chmod +x gradlew
           ./gradlew assembleRelease -x lint -x lintVitalRelease -x test --stacktrace --no-daemon 2>&1 | tee build_log.txt
           EXIT_CODE=${PIPESTATUS[0]}
           if [ $EXIT_CODE -ne 0 ]; then
-            echo "## ❌ تفاصيل خطأ التجميع:" >> $GITHUB_STEP_SUMMARY
+            echo "## ❌ Build Failure Details:" >> $GITHUB_STEP_SUMMARY
             tail -n 60 build_log.txt >> $GITHUB_STEP_SUMMARY
             exit $EXIT_CODE
           fi
 
-      # 11. رفع ملف الـ APK النهائي للتطبيق الرئيسي
+      # 11. رفع ملف الـ APK النهائي للتطبيق الأساسي
       - name: Upload Final Protected APK
         uses: actions/upload-artifact@v4
         with:
           name: Riders-Soloution-Pk-Release-APK
           path: app/build/outputs/apk/release/*.apk
 
-      # 12. رفع المفتاح الخاص للمطور لتوليد التراخيص
+      # 12. رفع المفتاح الخاص للمطور
       - name: Upload Developer Private Key
         uses: actions/upload-artifact@v4
         with:
