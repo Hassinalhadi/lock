@@ -26,7 +26,6 @@ jobs:
           git submodule sync --recursive || true
           git submodule update --init --recursive || true
 
-          # تنزيل احتياطي في حال كان المجلد فارغاً
           if [ ! -f "app/src/main/cpp/third_party/Dobby/CMakeLists.txt" ]; then
               echo "Downloading Dobby hook library fallback..."
               mkdir -p app/src/main/cpp/third_party
@@ -82,12 +81,23 @@ jobs:
             -storepass password123 -keypass password123 \
             -dname "CN=RidersSoloution, OU=Mobile, O=RidersSoloutionPk, L=Riyadh, C=SA"
 
-      # 8. معالجة وتوليد شعار التطبيق وأيقونات النظام
-      - name: Process Brand Logo and Icons
+      # 8. معالجة وتوليد شعار التطبيق وحذف ملفات anydpi المسببة للخطأ
+      - name: Process Brand Logo and Clean Legacy Icon XMLs
         run: |
+          # حذف مجلدات anydpi وملفات xml القديمة التي تطلب ic_launcher_background
+          find app/src/main/res/ -type d -name "*anydpi*" -exec rm -rf {} + || true
+          find app/src/main/res/ -name "*ic_launcher*.xml" -delete || true
+          find app/src/main/res/ -name "*ic_launcher*.webp" -delete || true
+
           cat << 'PYEOF' > prepare_icons.py
-          import os
+          import os, shutil
           from PIL import Image
+
+          res_dir = 'app/src/main/res'
+          if os.path.exists(res_dir):
+              for item in os.listdir(res_dir):
+                  if 'anydpi' in item:
+                      shutil.rmtree(os.path.join(res_dir, item), ignore_errors=True)
 
           img_file = None
           for ext in ['icon.jpg', 'logo.png', 'logo.jpg', 'logo.jpeg', 'icon.png']:
@@ -111,7 +121,6 @@ jobs:
                   'mipmap-xxxhdpi': (192, 192),
                   'drawable': (512, 512)
               }
-              res_dir = 'app/src/main/res'
               for folder, size in densities.items():
                   target_dir = os.path.join(res_dir, folder)
                   os.makedirs(target_dir, exist_ok=True)
@@ -337,7 +346,6 @@ jobs:
               protected void onCreate(Bundle savedInstanceState) {{
                   super.onCreate(savedInstanceState);
 
-                  // الافتراضي 30 يوماً
                   currentCal.add(Calendar.DAY_OF_YEAR, 30);
                   selectedExpiryDate = new SimpleDateFormat("yyyy-MM-dd", Locale.US).format(currentCal.getTime());
 
@@ -347,7 +355,6 @@ jobs:
                   layout.setPadding(40, 50, 40, 50);
                   layout.setGravity(Gravity.CENTER_HORIZONTAL);
 
-                  // شعار التطبيق
                   ImageView logoView = new ImageView(this);
                   int logoId = getResources().getIdentifier("app_logo", "drawable", getPackageName());
                   if (logoId != 0) {{
@@ -358,7 +365,6 @@ jobs:
                       layout.addView(logoView);
                   }}
 
-                  // عناوين التطبيق
                   TextView title = new TextView(this);
                   title.setText("Riders Soloution Pk");
                   title.setTextSize(22);
@@ -373,7 +379,6 @@ jobs:
                   subtitle.setGravity(Gravity.CENTER);
                   layout.addView(subtitle);
 
-                  // دعم واتساب
                   TextView supportText = new TextView(this);
                   supportText.setText("WhatsApp Support: +966 54 742 5565");
                   supportText.setTextSize(13);
@@ -382,7 +387,6 @@ jobs:
                   supportText.setPadding(0, 10, 0, 25);
                   layout.addView(supportText);
 
-                  // اسم العميل
                   TextView ownerLabel = new TextView(this);
                   ownerLabel.setText("Client Name / Reference:");
                   ownerLabel.setTextSize(14);
@@ -393,7 +397,6 @@ jobs:
                   ownerInput.setText("Customer");
                   layout.addView(ownerInput);
 
-                  // معرّف الجهاز HWID
                   TextView hwidLabel = new TextView(this);
                   hwidLabel.setText("Client Device HWID:");
                   hwidLabel.setTextSize(14);
@@ -404,7 +407,6 @@ jobs:
                   hwidInput.setHint("Paste client HWID here");
                   layout.addView(hwidInput);
 
-                  // اختيار تاريخ الانتهاء (التقويم التفاعلي)
                   TextView dateLabel = new TextView(this);
                   dateLabel.setText("License Expiry Date (Custom Calendar):");
                   dateLabel.setTextSize(14);
@@ -424,7 +426,6 @@ jobs:
                       }}
                   }});
 
-                  // أزرار المدد السريعة بجانب التقويم
                   LinearLayout presetsLayout = new LinearLayout(this);
                   presetsLayout.setOrientation(LinearLayout.HORIZONTAL);
                   presetsLayout.setPadding(0, 10, 0, 10);
@@ -453,7 +454,6 @@ jobs:
                   }}
                   layout.addView(presetsLayout);
 
-                  // زر توليد الترخيص
                   Button generateBtn = new Button(this);
                   generateBtn.setText("GENERATE LICENSE KEY");
                   generateBtn.setTextSize(16);
@@ -465,7 +465,6 @@ jobs:
                   generateBtn.setLayoutParams(genLp);
                   layout.addView(generateBtn);
 
-                  // مربع عرض المفتاح المولد
                   resultText = new EditText(this);
                   resultText.setHint("Generated license key will appear here");
                   resultText.setTextIsSelectable(true);
@@ -478,7 +477,6 @@ jobs:
                   resultText.setLayoutParams(resLp);
                   layout.addView(resultText);
 
-                  // أزرار النسخ والمشاركة
                   LinearLayout actionsLayout = new LinearLayout(this);
                   actionsLayout.setOrientation(LinearLayout.HORIZONTAL);
                   actionsLayout.setWeightSum(2);
@@ -504,7 +502,6 @@ jobs:
                   scrollView.addView(layout);
                   setContentView(scrollView);
 
-                  // أحداث الضغط على الأزرار
                   generateBtn.setOnClickListener(new View.OnClickListener() {{
                       @Override
                       public void onClick(View v) {{
@@ -551,7 +548,6 @@ jobs:
                   datePickerBtn.setText("Selected Expiry: " + selectedExpiryDate + " (Click to Pick Date)");
               }}
 
-              // نافذة التقويم المخصص
               private void openDatePicker() {{
                   int y = currentCal.get(Calendar.YEAR);
                   int m = currentCal.get(Calendar.MONTH);
