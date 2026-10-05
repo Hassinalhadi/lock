@@ -11,11 +11,30 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1. تنزيل الكود
+      # 1. تنزيل الكود مع المستودعات الفرعية (Git Submodules)
       - name: Checkout Repository
         uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
 
-      # 2. إعداد بيئة جافا
+      # 2. التأكد من تنزيل مكتبة Dobby الخاصة بالكاميرا
+      - name: Initialize Git Submodules & Dobby
+        run: |
+          git config --global url."https://github.com/".insteadOf "git@github.com:"
+          git config --global url."https://github.com/".insteadOf "git://"
+          git submodule sync --recursive || true
+          git submodule update --init --recursive || true
+
+          # تنزيل احتياطي في حال كان المجلد فارغاً
+          if [ ! -f "app/src/main/cpp/third_party/Dobby/CMakeLists.txt" ]; then
+              echo "Downloading Dobby hook library fallback..."
+              mkdir -p app/src/main/cpp/third_party
+              rm -rf app/src/main/cpp/third_party/Dobby
+              git clone --depth 1 https://github.com/jmpews/Dobby.git app/src/main/cpp/third_party/Dobby
+          fi
+
+      # 3. إعداد بيئة جافا
       - name: Setup Java JDK 17
         uses: actions/setup-java@v4
         with:
@@ -23,7 +42,7 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
-      # 3. إعداد بيئة بايثون
+      # 4. إعداد بيئة بايثون
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -33,7 +52,7 @@ jobs:
         run: |
           pip install --no-cache-dir Pillow
 
-      # 4. توجيه المستودعات إلى السيرفرات الرسمية
+      # 5. توجيه المستودعات إلى السيرفرات الرسمية
       - name: Configure Official Maven Repositories
         run: |
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/google|https://dl.google.com/dl/android/maven2|g' {} +
@@ -41,7 +60,7 @@ jobs:
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/jcenter|https://repo1.maven.org/maven2|g' {} +
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
 
-      # 5. توليد مفاتيح التشفير RSA-2048
+      # 6. توليد مفاتيح التشفير RSA-2048
       - name: Generate RSA-2048 Key Pair
         run: |
           mkdir -p keys_output
@@ -54,7 +73,7 @@ jobs:
           base64 -w 0 keys_output/private_key.pk8 > keys_output/private_key_b64.txt
           echo "RSA keys successfully generated."
 
-      # 6. تجهيز مفتاح توقيع APK (Keystore)
+      # 7. تجهيز مفتاح توقيع APK (Keystore)
       - name: Generate Signing Keystore
         run: |
           mkdir -p app
@@ -63,7 +82,7 @@ jobs:
             -storepass password123 -keypass password123 \
             -dname "CN=RidersSoloution, OU=Mobile, O=RidersSoloutionPk, L=Riyadh, C=SA"
 
-      # 7. معالجة وتوليد شعار التطبيق وأيقونات النظام
+      # 8. معالجة وتوليد شعار التطبيق وأيقونات النظام
       - name: Process Brand Logo and Icons
         run: |
           cat << 'PYEOF' > prepare_icons.py
@@ -107,7 +126,7 @@ jobs:
           PYEOF
           python3 prepare_icons.py
 
-      # 8. حفظ نسخة أصلية من build.gradle وضبط التوقيع (تم تصحيح استيراد os)
+      # 9. حفظ نسخة أصلية من build.gradle وضبط التوقيع والـ Proguard
       - name: Configure Main App Signing & Proguard
         run: |
           cp app/build.gradle app/build.gradle.original
@@ -142,7 +161,7 @@ jobs:
           PYEOF
           python3 patch_gradle.py
 
-      # 9. بناء تطبيق الكاميرا الأساسي
+      # 10. بناء تطبيق الكاميرا الأساسي
       - name: Build Main Camera APK
         run: |
           chmod +x gradlew
@@ -157,13 +176,13 @@ jobs:
           cp "$MAIN_APK" final_output/RidersSoloutionPk.apk
           echo "SUCCESS: Copied Main APK -> final_output/RidersSoloutionPk.apk"
 
-          # إيقاف خادم جردل لتفريغ الذاكرة بالكامل
+          # إيقاف خادم جردل لتفريغ الذاكرة المؤقتة
           ./gradlew --stop
 
-      # 10. تهيئة وبناء تطبيق KeyGen (مع المفتاح المدمج والتقويم المخصص)
+      # 11. تهيئة وبناء تطبيق KeyGen (مع المفتاح المدمج والتقويم التفاعلي)
       - name: Configure and Build KeyGen APK
         run: |
-          # تنظيف الكود القديم لتجهيز تطبيق المولد المستقل
+          # تنظيف كود C++ لتسريع واستقلال بناء تطبيق المولد
           rm -rf app/build
           rm -rf app/src/main/java
           rm -rf app/src/main/cpp
@@ -173,7 +192,7 @@ jobs:
           mkdir -p app/src/main/java/riders/soloution/keygen
           mkdir -p app/src/main/res/values
 
-          # 1. إعداد build.gradle متوافق مع إعدادات المشروع بدون C++
+          # 1. إعداد build.gradle بدون C++
           cat << 'PYEOF' > make_keygen_gradle.py
           import re, os
 
@@ -264,7 +283,7 @@ jobs:
           </manifest>
           EOF
 
-          # 3. نصوص الواجهة بالإنجليزية
+          # 3. اسم التطبيق بالإنجليزية
           cat << 'EOF' > app/src/main/res/values/strings.xml
           <resources>
               <string name="keygen_app_name">Riders Soloution Pk - KeyGen</string>
@@ -625,7 +644,7 @@ jobs:
               exit 1
           fi
 
-      # 11. رفع التطبيقات والمفاتيح كـ Artifacts
+      # 12. رفع التطبيقات والمفاتيح كـ Artifacts
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -637,7 +656,7 @@ jobs:
             keys_output/public_key.pem
           if-no-files-found: error
 
-      # 12. نشر إصدار مباشر على GitHub Releases للتحميل المباشر للهاتف
+      # 13. نشر إصدار مباشر على GitHub Releases للتحميل المباشر للهاتف
       - name: Create GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
