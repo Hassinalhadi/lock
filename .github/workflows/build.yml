@@ -68,8 +68,9 @@ jobs:
           openssl rsa -in keys_output/private_raw.pem -pubout -out keys_output/public_key.pem
           cp keys_output/private_raw.pem keys_output/private_key.pem
           
-          # استخراج المفتاح الخاص بصيغة Base64 سطر واحد لدمجه برمجياً داخل الكيجين
+          # استخراج المفاتيح بصيغة Base64 سطر واحد لدمجها برمجياً
           base64 -w 0 keys_output/private_key.pk8 > keys_output/private_key_b64.txt
+          grep -v -- "-----" keys_output/public_key.pem | tr -d '\n\r ' > keys_output/public_key_b64.txt
           echo "RSA keys successfully generated."
 
       # 7. تجهيز مفتاح توقيع APK (Keystore)
@@ -81,24 +82,25 @@ jobs:
             -storepass password123 -keypass password123 \
             -dname "CN=RidersSoloution, OU=Mobile, O=RidersSoloutionPk, L=Riyadh, C=SA"
 
-      # 8. معالجة وتوليد شعار التطبيق وحذف ملفات anydpi المسببة للخطأ
-      - name: Process Brand Logo and Clean Legacy Icon XMLs
+      # 8. معالجة الشعار والأيقونات وتغيير الاسم إلى Riders Soloution Pk
+      - name: Rebrand to Riders Soloution Pk & Process Icons
         run: |
-          # حذف مجلدات anydpi وملفات xml القديمة التي تطلب ic_launcher_background
+          # 1. حذف مجلدات anydpi التي سببت خطأ الموارد سابقاً
           find app/src/main/res/ -type d -name "*anydpi*" -exec rm -rf {} + || true
           find app/src/main/res/ -name "*ic_launcher*.xml" -delete || true
           find app/src/main/res/ -name "*ic_launcher*.webp" -delete || true
 
+          # 2. تغيير اسم التطبيق في جميع ملفات strings.xml
+          find app/src/main/res/ -name "strings.xml" -exec sed -i 's|CamSwap|Riders Soloution Pk|g' {} +
+          find app/src/main/res/ -name "strings.xml" -exec sed -i 's|<string name="app_name">.*</string>|<string name="app_name">Riders Soloution Pk</string>|g' {} +
+          rm -rf app/src/main/res/values-zh*
+
+          # 3. توليد الأيقونات الجديدة
           cat << 'PYEOF' > prepare_icons.py
           import os, shutil
           from PIL import Image
 
           res_dir = 'app/src/main/res'
-          if os.path.exists(res_dir):
-              for item in os.listdir(res_dir):
-                  if 'anydpi' in item:
-                      shutil.rmtree(os.path.join(res_dir, item), ignore_errors=True)
-
           img_file = None
           for ext in ['icon.jpg', 'logo.png', 'logo.jpg', 'logo.jpeg', 'icon.png']:
               if os.path.exists(ext):
@@ -135,7 +137,389 @@ jobs:
           PYEOF
           python3 prepare_icons.py
 
-      # 9. حفظ نسخة أصلية من build.gradle وضبط التوقيع والـ Proguard
+      # 9. حقن نظام التراخيص وواجهة التفعيل داخل تطبيق الكاميرا الأساسي
+      - name: Inject Licensing System and Activation Screen
+        run: |
+          PUB_KEY=$(cat keys_output/public_key_b64.txt)
+
+          # 1. إنشاء فئة LicenseManager داخل حزمة التطبيق
+          cat << EOF > app/src/main/java/io/github/zensu357/camswap/LicenseManager.java
+          package io.github.zensu357.camswap;
+
+          import android.content.Context;
+          import android.content.SharedPreferences;
+          import android.os.Build;
+          import android.provider.Settings;
+          import android.util.Base64;
+          import org.json.JSONObject;
+
+          import java.nio.charset.StandardCharsets;
+          import java.security.KeyFactory;
+          import java.security.MessageDigest;
+          import java.security.PublicKey;
+          import java.security.Signature;
+          import java.security.spec.X509EncodedKeySpec;
+          import java.text.SimpleDateFormat;
+          import java.util.Date;
+          import java.util.Locale;
+          import java.util.TimeZone;
+
+          public class LicenseManager {
+
+              public static String PUBLIC_KEY_BASE64 = "$PUB_KEY";
+              private static final String PREF_NAME = "riders_soloution_license";
+              private static final String KEY_LICENSE = "saved_license_key";
+
+              public static class LicenseInfo {
+                  public boolean isValid;
+                  public String owner = "";
+                  public String hwid = "";
+                  public String expiresAt = "";
+                  public String tier = "";
+                  public String errorMessage = "";
+
+                  public LicenseInfo(boolean isValid, String errorMessage) {
+                      this.isValid = isValid;
+                      this.errorMessage = errorMessage;
+                  }
+
+                  public LicenseInfo(boolean isValid, String owner, String hwid, String expiresAt, String tier) {
+                      this.isValid = isValid;
+                      this.owner = owner;
+                      this.hwid = hwid;
+                      this.expiresAt = expiresAt;
+                      this.tier = tier;
+                  }
+              }
+
+              public static String getDeviceHWID(Context context) {
+                  try {
+                      String androidId = Settings.Secure.getString(context.getContentResolver(), Settings.Secure.ANDROID_ID);
+                      if (androidId == null) androidId = "";
+                      String raw = androidId + Build.BOARD + Build.BRAND + Build.DEVICE + Build.HARDWARE + Build.MANUFACTURER + Build.MODEL;
+                      MessageDigest digest = MessageDigest.getInstance("SHA-256");
+                      byte[] hash = digest.digest(raw.getBytes(StandardCharsets.UTF_8));
+                      StringBuilder hexString = new StringBuilder();
+                      for (byte b : hash) {
+                          String hex = Integer.toHexString(0xff & b);
+                          if (hex.length() == 1) hexString.append('0');
+                          hexString.append(hex);
+                      }
+                      return hexString.substring(0, 16).toUpperCase(Locale.US);
+                  } catch (Exception e) {
+                      return "UNKNOWN_HWID";
+                  }
+              }
+
+              public static LicenseInfo verifyLicense(Context context, String licenseKey) {
+                  if (licenseKey == null || licenseKey.trim().isEmpty()) {
+                      return new LicenseInfo(false, "License key is empty");
+                  }
+                  String[] parts = licenseKey.trim().split("\\\\.");
+                  if (parts.length != 2) {
+                      return new LicenseInfo(false, "Invalid license key format");
+                  }
+
+                  try {
+                      byte[] payloadBytes = Base64.decode(parts[0], Base64.DEFAULT);
+                      byte[] sigBytes = Base64.decode(parts[1], Base64.DEFAULT);
+
+                      byte[] keyBytes = Base64.decode(PUBLIC_KEY_BASE64, Base64.DEFAULT);
+                      X509EncodedKeySpec keySpec = new X509EncodedKeySpec(keyBytes);
+                      KeyFactory keyFactory = KeyFactory.getInstance("RSA");
+                      PublicKey pubKey = keyFactory.generatePublic(keySpec);
+
+                      Signature sig = Signature.getInstance("SHA256withRSA");
+                      sig.initVerify(pubKey);
+                      sig.update(payloadBytes);
+
+                      if (!sig.verify(sigBytes)) {
+                          return new LicenseInfo(false, "Invalid digital signature");
+                      }
+
+                      String jsonStr = new String(payloadBytes, StandardCharsets.UTF_8);
+                      JSONObject json = new JSONObject(jsonStr);
+
+                      String licHwid = json.optString("hwid", "");
+                      String owner = json.optString("owner", "User");
+                      String exp = json.optString("expires_at", "");
+                      String tier = json.optString("tier", "VIP");
+
+                      String currentHwid = getDeviceHWID(context);
+                      if (!licHwid.equalsIgnoreCase(currentHwid)) {
+                          return new LicenseInfo(false, "License is bound to another device");
+                      }
+
+                      if (!"LIFETIME".equalsIgnoreCase(exp) && !exp.isEmpty()) {
+                          SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
+                          sdf.setTimeZone(TimeZone.getTimeZone("UTC"));
+                          Date expDate = sdf.parse(exp);
+                          if (expDate != null && new Date().after(expDate)) {
+                              return new LicenseInfo(false, "License has expired on " + exp);
+                          }
+                      }
+
+                      return new LicenseInfo(true, owner, licHwid, exp, tier);
+
+                  } catch (Exception e) {
+                      return new LicenseInfo(false, "Verification error: " + e.getMessage());
+                  }
+              }
+
+              public static boolean saveLicense(Context context, String key) {
+                  SharedPreferences pref = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+                  return pref.edit().putString(KEY_LICENSE, key.trim()).commit();
+              }
+
+              public static String getSavedLicense(Context context) {
+                  SharedPreferences pref = context.getSharedPreferences(PREF_NAME, Context.MODE_PRIVATE);
+                  return pref.getString(KEY_LICENSE, "");
+              }
+
+              public static LicenseInfo checkCurrentLicense(Context context) {
+                  String savedKey = getSavedLicense(context);
+                  return verifyLicense(context, savedKey);
+              }
+          }
+          EOF
+
+          # 2. إنشاء فئة شاشة التفعيل ActivationActivity بحقوق Riders Soloution Pk
+          cat << 'EOF' > app/src/main/java/io/github/zensu357/camswap/ActivationActivity.java
+          package io.github.zensu357.camswap;
+
+          import android.app.Activity;
+          import android.content.ClipData;
+          import android.content.ClipboardManager;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.net.Uri;
+          import android.os.Bundle;
+          import android.view.Gravity;
+          import android.view.View;
+          import android.widget.*;
+
+          public class ActivationActivity extends Activity {
+
+              private static final String SUPPORT_WHATSAPP = "966547425565";
+              private TextView hwidView;
+              private EditText keyInput;
+
+              @Override
+              protected void onCreate(Bundle savedInstanceState) {
+                  super.onCreate(savedInstanceState);
+
+                  // فحص ما إذا كان التطبيق مفعلاً مسبقاً وسارياً
+                  LicenseManager.LicenseInfo info = LicenseManager.checkCurrentLicense(this);
+                  if (info.isValid) {
+                      launchMainApp();
+                      return;
+                  }
+
+                  ScrollView scrollView = new ScrollView(this);
+                  LinearLayout layout = new LinearLayout(this);
+                  layout.setOrientation(LinearLayout.VERTICAL);
+                  layout.setPadding(40, 50, 40, 50);
+                  layout.setGravity(Gravity.CENTER_HORIZONTAL);
+
+                  // الشعار
+                  ImageView logoView = new ImageView(this);
+                  int logoId = getResources().getIdentifier("app_logo", "drawable", getPackageName());
+                  if (logoId != 0) {
+                      logoView.setImageResource(logoId);
+                      LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(220, 220);
+                      lp.bottomMargin = 25;
+                      logoView.setLayoutParams(lp);
+                      layout.addView(logoView);
+                  }
+
+                  // اسم وهوية التطبيق
+                  TextView title = new TextView(this);
+                  title.setText("Riders Soloution Pk");
+                  title.setTextSize(24);
+                  title.setTypeface(null, android.graphics.Typeface.BOLD);
+                  title.setGravity(Gravity.CENTER);
+                  layout.addView(title);
+
+                  TextView subtitle = new TextView(this);
+                  subtitle.setText("Official Security & Activation Gateway");
+                  subtitle.setTextSize(14);
+                  subtitle.setTextColor(0xFF888888);
+                  subtitle.setGravity(Gravity.CENTER);
+                  subtitle.setPadding(0, 5, 0, 15);
+                  layout.addView(subtitle);
+
+                  // حقوق الواجهة
+                  TextView copyright = new TextView(this);
+                  copyright.setText("© Riders Soloution Pk - All Rights Reserved");
+                  copyright.setTextSize(12);
+                  copyright.setTextColor(0xFF999999);
+                  copyright.setGravity(Gravity.CENTER);
+                  copyright.setPadding(0, 0, 0, 25);
+                  layout.addView(copyright);
+
+                  // مربع معرف الجهاز HWID
+                  final String hwid = LicenseManager.getDeviceHWID(this);
+
+                  TextView hwidLabel = new TextView(this);
+                  hwidLabel.setText("Your Device Hardware ID (HWID):");
+                  hwidLabel.setTextSize(14);
+                  layout.addView(hwidLabel);
+
+                  hwidView = new TextView(this);
+                  hwidView.setText(hwid);
+                  hwidView.setTextSize(16);
+                  hwidView.setTypeface(null, android.graphics.Typeface.BOLD);
+                  hwidView.setPadding(20, 20, 20, 20);
+                  hwidView.setBackgroundColor(0xFFEEEEEE);
+                  hwidView.setTextColor(0xFF000000);
+                  hwidView.setTextIsSelectable(true);
+                  LinearLayout.LayoutParams hlp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                  hlp.setMargins(0, 10, 0, 15);
+                  hwidView.setLayoutParams(hlp);
+                  layout.addView(hwidView);
+
+                  // أزرار النسخ والتواصل عبر واتساب
+                  LinearLayout actionsLayout = new LinearLayout(this);
+                  actionsLayout.setOrientation(LinearLayout.HORIZONTAL);
+                  actionsLayout.setWeightSum(2);
+
+                  Button copyHwidBtn = new Button(this);
+                  copyHwidBtn.setText("COPY HWID");
+                  LinearLayout.LayoutParams cpLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f);
+                  cpLp.rightMargin = 8;
+                  copyHwidBtn.setLayoutParams(cpLp);
+                  actionsLayout.addView(copyHwidBtn);
+
+                  Button whatsappBtn = new Button(this);
+                  whatsappBtn.setText("WHATSAPP");
+                  whatsappBtn.setBackgroundColor(0xFF25D366);
+                  whatsappBtn.setTextColor(0xFFFFFFFF);
+                  LinearLayout.LayoutParams waLp = new LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1.0f);
+                  waLp.leftMargin = 8;
+                  whatsappBtn.setLayoutParams(waLp);
+                  actionsLayout.addView(whatsappBtn);
+
+                  layout.addView(actionsLayout);
+
+                  // حقل إدخال مفتاح الترخيص
+                  TextView keyLabel = new TextView(this);
+                  keyLabel.setText("Enter Activation License Key:");
+                  keyLabel.setTextSize(14);
+                  keyLabel.setPadding(0, 30, 0, 10);
+                  layout.addView(keyLabel);
+
+                  keyInput = new EditText(this);
+                  keyInput.setHint("Paste license key here");
+                  keyInput.setMinLines(3);
+                  keyInput.setPadding(20, 20, 20, 20);
+                  keyInput.setBackgroundColor(0xFFF9F9F9);
+                  LinearLayout.LayoutParams klp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                  keyInput.setLayoutParams(klp);
+                  layout.addView(keyInput);
+
+                  // زر التفعيل
+                  Button activateBtn = new Button(this);
+                  activateBtn.setText("ACTIVATE LICENSE NOW");
+                  activateBtn.setTextSize(16);
+                  activateBtn.setTypeface(null, android.graphics.Typeface.BOLD);
+                  activateBtn.setBackgroundColor(0xFF4CAF50);
+                  activateBtn.setTextColor(0xFFFFFFFF);
+                  LinearLayout.LayoutParams alp = new LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, LinearLayout.LayoutParams.WRAP_CONTENT);
+                  alp.topMargin = 25;
+                  activateBtn.setLayoutParams(alp);
+                  layout.addView(activateBtn);
+
+                  scrollView.addView(layout);
+                  setContentView(scrollView);
+
+                  // أحداث الأزرار
+                  copyHwidBtn.setOnClickListener(new View.OnClickListener() {
+                      @Override
+                      public void onClick(View v) {
+                          ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
+                          cm.setPrimaryClip(ClipData.newPlainText("HWID", hwid));
+                          Toast.makeText(ActivationActivity.this, "HWID copied to clipboard!", Toast.LENGTH_SHORT).show();
+                      }
+                  });
+
+                  whatsappBtn.setOnClickListener(new View.OnClickListener() {
+                      @Override
+                      public void onClick(View v) {
+                          String msg = "Hello, I want to activate license for Riders Soloution Pk.\nMy HWID: " + hwid;
+                          String url = "https://api.whatsapp.com/send?phone=" + SUPPORT_WHATSAPP + "&text=" + Uri.encode(msg);
+                          Intent intent = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+                          startActivity(intent);
+                      }
+                  });
+
+                  activateBtn.setOnClickListener(new View.OnClickListener() {
+                      @Override
+                      public void onClick(View v) {
+                          String inputKey = keyInput.getText().toString().trim();
+                          if (inputKey.isEmpty()) {
+                              Toast.makeText(ActivationActivity.this, "Please enter your license key", Toast.LENGTH_SHORT).show();
+                              return;
+                          }
+
+                          LicenseManager.LicenseInfo result = LicenseManager.verifyLicense(ActivationActivity.this, inputKey);
+                          if (result.isValid) {
+                              LicenseManager.saveLicense(ActivationActivity.this, inputKey);
+                              Toast.makeText(ActivationActivity.this, "License activated successfully! Welcome to Riders Soloution Pk", Toast.LENGTH_LONG).show();
+                              launchMainApp();
+                          } else {
+                              Toast.makeText(ActivationActivity.this, "Activation failed: " + result.errorMessage, Toast.LENGTH_LONG).show();
+                          }
+                      }
+                  });
+              }
+
+              private void launchMainApp() {
+                  try {
+                      Intent intent = new Intent(this, MainActivity.class);
+                      startActivity(intent);
+                      finish();
+                  } catch (Exception e) {
+                      Toast.makeText(this, "Error opening app: " + e.getMessage(), Toast.LENGTH_SHORT).show();
+                  }
+              }
+          }
+          EOF
+
+          # 3. تعديل AndroidManifest لتصبح شاشة التفعيل هي شاشة البداية
+          cat << 'PYEOF' > patch_manifest.py
+          import re
+
+          with open('app/src/main/AndroidManifest.xml', 'r') as f:
+              m = f.read()
+
+          # إزالة LAUNCHER من MainActivity
+          m = re.sub(
+              r'<activity\s+android:name="\.MainActivity"[^>]*>.*?</activity>',
+              '<activity android:name=".MainActivity" android:exported="true" />',
+              m,
+              flags=re.DOTALL
+          )
+
+          # إضافة ActivationActivity كـ LAUNCHER رئيسي
+          act_code = """
+                  <activity
+                      android:name=".ActivationActivity"
+                      android:exported="true"
+                      android:windowSoftInputMode="adjustResize">
+                      <intent-filter>
+                          <action android:name="android.intent.action.MAIN" />
+                          <category android:name="android.intent.category.LAUNCHER" />
+                      </intent-filter>
+                  </activity>
+          """
+          m = m.replace('</application>', act_code + '\n    </application>')
+
+          with open('app/src/main/AndroidManifest.xml', 'w') as f:
+              f.write(m)
+          PYEOF
+          python3 patch_manifest.py
+
+      # 10. ضبط التوقيع والـ Proguard
       - name: Configure Main App Signing & Proguard
         run: |
           cp app/build.gradle app/build.gradle.original
@@ -166,11 +550,11 @@ jobs:
 
           if os.path.exists('app/proguard-rules.pro'):
               with open('app/proguard-rules.pro', 'a') as f:
-                  f.write("\n-dontwarn de.robv.android.xposed.**\n-keep class de.robv.android.xposed.** { *; }\n")
+                  f.write("\n-dontwarn de.robv.android.xposed.**\n-keep class de.robv.android.xposed.** { *; }\n-keep class io.github.zensu357.camswap.LicenseManager** { *; }\n")
           PYEOF
           python3 patch_gradle.py
 
-      # 10. بناء تطبيق الكاميرا الأساسي
+      # 11. بناء تطبيق الكاميرا الأساسي المرخص باسم Riders Soloution Pk
       - name: Build Main Camera APK
         run: |
           chmod +x gradlew
@@ -185,13 +569,12 @@ jobs:
           cp "$MAIN_APK" final_output/RidersSoloutionPk.apk
           echo "SUCCESS: Copied Main APK -> final_output/RidersSoloutionPk.apk"
 
-          # إيقاف خادم جردل لتفريغ الذاكرة المؤقتة
+          # إيقاف خادم جردل لتفريغ الذاكرة
           ./gradlew --stop
 
-      # 11. تهيئة وبناء تطبيق KeyGen (مع المفتاح المدمج والتقويم التفاعلي)
+      # 12. تهيئة وبناء تطبيق KeyGen المولد مع التقويم المخصص والمفتاح المدمج
       - name: Configure and Build KeyGen APK
         run: |
-          # تنظيف كود C++ لتسريع واستقلال بناء تطبيق المولد
           rm -rf app/build
           rm -rf app/src/main/java
           rm -rf app/src/main/cpp
@@ -201,7 +584,7 @@ jobs:
           mkdir -p app/src/main/java/riders/soloution/keygen
           mkdir -p app/src/main/res/values
 
-          # 1. إعداد build.gradle بدون C++
+          # build.gradle للمولد
           cat << 'PYEOF' > make_keygen_gradle.py
           import re, os
 
@@ -266,7 +649,7 @@ jobs:
           PYEOF
           python3 make_keygen_gradle.py
 
-          # 2. ملف AndroidManifest الخاص بالمولد
+          # AndroidManifest للمولد
           cat << 'EOF' > app/src/main/AndroidManifest.xml
           <?xml version="1.0" encoding="utf-8"?>
           <manifest xmlns:android="http://schemas.android.com/apk/res/android"
@@ -292,14 +675,13 @@ jobs:
           </manifest>
           EOF
 
-          # 3. اسم التطبيق بالإنجليزية
           cat << 'EOF' > app/src/main/res/values/strings.xml
           <resources>
               <string name="keygen_app_name">Riders Soloution Pk - KeyGen</string>
           </resources>
           EOF
 
-          # 4. كود تطبيق المولد بلغة جافا مع التقويم التفاعلي والمفتاح المدمج
+          # كود تطبيق المولد بلغة جافا
           cat << 'PYEOF' > generate_keygen_code.py
           import os
 
@@ -617,7 +999,7 @@ jobs:
           PYEOF
           python3 generate_keygen_code.py
 
-          # 5. بناء تطبيق KeyGen
+          # بناء تطبيق KeyGen
           ./gradlew clean assembleRelease --no-daemon --stacktrace
 
           KEYGEN_APK=$(find app/build/outputs/apk/ -name "*.apk" | head -n 1)
@@ -628,7 +1010,7 @@ jobs:
           cp "$KEYGEN_APK" final_output/RidersSoloutionPk_KeyGen.apk
           echo "SUCCESS: Copied KeyGen APK -> final_output/RidersSoloutionPk_KeyGen.apk"
 
-          # 6. التحقق النهائي الصارم من وجود التطبيقين في مجلد المخرجات
+          # التحقق النهائي
           echo "=== Verifying Final Output Files ==="
           ls -lh final_output/
           if [ ! -f final_output/RidersSoloutionPk.apk ]; then
@@ -640,7 +1022,7 @@ jobs:
               exit 1
           fi
 
-      # 12. رفع التطبيقات والمفاتيح كـ Artifacts
+      # 13. رفع التطبيقات والمفاتيح كـ Artifacts
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
         with:
@@ -652,7 +1034,7 @@ jobs:
             keys_output/public_key.pem
           if-no-files-found: error
 
-      # 13. نشر إصدار مباشر على GitHub Releases للتحميل المباشر للهاتف
+      # 14. نشر إصدار مباشر على GitHub Releases للتحميل المباشر للهاتف
       - name: Create GitHub Release
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -663,4 +1045,4 @@ jobs:
             final_output/RidersSoloutionPk_KeyGen.apk \
             keys_output/private_key.pem \
             --title "Riders Soloution Pk v1.0" \
-            --notes "Direct download: RidersSoloutionPk.apk (Main App) and RidersSoloutionPk_KeyGen.apk (Pre-configured KeyGen with Custom Calendar & WhatsApp Support +966547425565)."
+            --notes "Generated APKs for Riders Soloution Pk (Licensed App) and Embedded KeyGen APK with Custom Calendar & WhatsApp Support (+966547425565)."
