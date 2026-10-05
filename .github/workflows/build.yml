@@ -25,15 +25,17 @@ jobs:
           java-version: '17'
           cache: 'gradle'
 
+      # 3. إعداد بايثون لتنفيذ سكريبتات الحقن والتعديل
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.11'
 
+      # 4. تثبيت مكتبات بايثون المطلوبة
       - name: Install Python Libraries
         run: pip install cryptography Pillow pyyaml
 
-      # 3. مزامنة المستودعات وتحديث السيرفرات الرسمية
+      # 5. مزامنة المستودعات وتحديث السيرفرات الرسمية
       - name: Sync Submodules & Clean Repositories
         run: |
           git submodule sync --recursive
@@ -45,14 +47,13 @@ jobs:
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/repository/jcenter|https://repo1.maven.org/maven2|g' {} +
           find . -type f \( -name "*.gradle" -o -name "*.gradle.kts" \) -exec sed -i 's|https://maven.aliyun.com/[^'\''"]*|https://repo1.maven.org/maven2|g' {} +
 
-      # 4. معالجة وتوليد أيقونة وشعار Riders Soloution Pk وأيقونة واتساب
+      # 6. معالجة وتوليد أيقونة وشعار Riders Soloution Pk وأيقونة واتساب
       - name: Create App Icons and WhatsApp Vector
         run: |
           cat << 'PYEOF' > process_icon.py.raw
           import os, glob, shutil
           from PIL import Image
 
-          # حذف الأيقونات القديمة لتجنب تكرار الموارد
           for f in glob.glob('app/src/main/res/mipmap*/*launcher*'):
               try: os.remove(f)
               except Exception: pass
@@ -92,7 +93,7 @@ jobs:
           python3 -c "import textwrap; open('process_icon.py', 'w').write(textwrap.dedent(open('process_icon.py.raw').read()))"
           python3 process_icon.py
 
-      # 5. تعديل الاسم إلى Riders Soloution Pk وحصر التواصل على الواتساب فقط
+      # 7. تعديل الاسم إلى Riders Soloution Pk وحصر التواصل على الواتساب فقط
       - name: Apply Branding and Exclude Telegram
         run: |
           cat << 'PYEOF' > rebrand_ui.py.raw
@@ -175,28 +176,32 @@ jobs:
           python3 -c "import textwrap; open('rebrand_ui.py', 'w').write(textwrap.dedent(open('rebrand_ui.py.raw').read()))"
           python3 rebrand_ui.py
 
-      # 6. توليد مفاتيح تشفير التراخيص RSA-2048
-      - name: Generate RSA Cryptographic Keys
+      # 8. قراءة واستخدام المفتاح العام الثابت للمشروع (RSA Public Key)
+      - name: Load RSA Public Key
         run: |
-          mkdir -p keys_output
-          cat << 'PYEOF' > gen_keys.py.raw
-          from cryptography.hazmat.primitives.asymmetric import rsa
+          cat << 'PYEOF' > load_key.py.raw
+          import os, base64
           from cryptography.hazmat.primitives import serialization
-          import base64
 
-          key = rsa.generate_private_key(65537, 2048)
-          with open('keys_output/private_key.pem', 'wb') as f:
-              f.write(key.private_bytes(serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8, serialization.NoEncryption()))
-          pub = key.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
-          clean_pub = base64.b64encode(pub).decode('utf-8')
-          with open('keys_output/public_key_clean.txt', 'w') as f:
+          pub_file = 'public_key.pem'
+          if not os.path.exists(pub_file):
+              raise FileNotFoundError("Error: public_key.pem not found in repository root!")
+
+          with open(pub_file, 'rb') as f:
+              pub = serialization.load_pem_public_key(f.read())
+
+          der = pub.public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
+          clean_pub = base64.b64encode(der).decode('utf-8')
+
+          with open('public_key_clean.txt', 'w') as f:
               f.write(clean_pub)
+          print(f"Successfully loaded public key from {pub_file}")
           PYEOF
-          python3 -c "import textwrap; open('gen_keys.py', 'w').write(textwrap.dedent(open('gen_keys.py.raw').read()))"
-          python3 gen_keys.py
-          echo "PUB_KEY=$(cat keys_output/public_key_clean.txt)" >> $GITHUB_ENV
+          python3 -c "import textwrap; open('load_key.py', 'w').write(textwrap.dedent(open('load_key.py.raw').read()))"
+          python3 load_key.py
+          echo "PUB_KEY=$(cat public_key_clean.txt)" >> $GITHUB_ENV
 
-      # 7. حقن نظام الحماية وشاشة التفعيل مع زر الواتساب فقط
+      # 9. حقن نظام الحماية وشاشة التفعيل مع زر الواتساب فقط
       - name: Inject Security Protection and Activation UI
         run: |
           cat << 'PYEOF' > inject_ui.py.raw
@@ -244,366 +249,12 @@ jobs:
               public static String getDeviceHWID(Context ctx) {{
                   try {{
                       String aId = "";
-                      if (ctx != null) aId = Settings.Secure.getString(ctx.getContentResolver(), Settings.Secure.ANDROID_ID);
+                      if (ctx != null) {{
+                          try {{
+                              aId = Settings.Secure.getString(ctx.getContentResolver(), Settings.Secure.ANDROID_ID);
+                          }} catch (Exception ignored) {{}}
+                      }}
                       if (aId == null) aId = "";
                       String raw = aId + Build.BOARD + Build.BRAND + Build.DEVICE + Build.HARDWARE + Build.MANUFACTURER + Build.MODEL;
                       MessageDigest md = MessageDigest.getInstance("SHA-256");
-                      byte[] h = md.digest(raw.getBytes("UTF-8"));
-                      StringBuilder sb = new StringBuilder();
-                      for (byte b : h) {{
-                          String hex = Integer.toHexString(0xff & b);
-                          if (hex.length() == 1) sb.append('0');
-                          sb.append(hex);
-                      }}
-                      return sb.substring(0, 16).toUpperCase(Locale.US);
-                  }} catch (Exception e) {{ return "UNKNOWN_HWID"; }}
-              }}
-              public static LicenseInfo verifyLicense(Context ctx, String key) {{
-                  if (key == null || key.trim().isEmpty()) return new LicenseInfo(false, "Key is empty");
-                  String k = key.trim();
-                  int dot = k.indexOf('.');
-                  if (dot <= 0 || dot >= k.length() - 1) return new LicenseInfo(false, "Invalid format");
-                  try {{
-                      byte[] pBytes = Base64.decode(k.substring(0, dot).trim(), Base64.DEFAULT);
-                      byte[] sBytes = Base64.decode(k.substring(dot + 1).trim(), Base64.DEFAULT);
-                      X509EncodedKeySpec spec = new X509EncodedKeySpec(Base64.decode(PUBLIC_KEY_BASE64, Base64.DEFAULT));
-                      PublicKey pk = KeyFactory.getInstance("RSA").generatePublic(spec);
-                      Signature sig = Signature.getInstance("SHA256withRSA");
-                      sig.initVerify(pk);
-                      sig.update(pBytes);
-                      if (!sig.verify(sBytes)) return new LicenseInfo(false, "Signature mismatch");
-                      JSONObject j = new JSONObject(new String(pBytes, "UTF-8"));
-                      String h = j.optString("hwid", "");
-                      String o = j.optString("owner", "User");
-                      String exp = j.optString("expires_at", "");
-                      String t = j.optString("tier", "VIP");
-                      if (!h.equalsIgnoreCase(getDeviceHWID(ctx))) return new LicenseInfo(false, "HWID mismatch");
-                      if (!"LIFETIME".equalsIgnoreCase(exp)) {{
-                          SimpleDateFormat sdf = new SimpleDateFormat("yyyy-MM-dd", Locale.US);
-                          Date d = sdf.parse(exp);
-                          if (d != null && new Date().after(d)) return new LicenseInfo(false, "License expired");
-                      }}
-                      return new LicenseInfo(true, o, h, exp, t);
-                  }} catch (Exception e) {{ return new LicenseInfo(false, e.getMessage()); }}
-              }}
-              public static LicenseInfo verifyAndSave(Context ctx, String key) {{
-                  LicenseInfo res = verifyLicense(ctx, key);
-                  if (res.isValid) {{
-                      try {{
-                          File dir = new File(Environment.getExternalStorageDirectory(), "RidersSoloutionPk");
-                          if (!dir.exists()) dir.mkdirs();
-                          FileWriter fw = new FileWriter(new File(dir, "license.key"));
-                          fw.write(key.trim()); fw.close();
-                      }} catch (Exception ignored) {{}}
-                      if (ctx != null) ctx.getSharedPreferences("pk_rider_lic", Context.MODE_PRIVATE).edit().putString("k", key.trim()).apply();
-                  }}
-                  return res;
-              }}
-              public static String readKey(Context ctx) {{
-                  try {{
-                      File f = new File(Environment.getExternalStorageDirectory(), "RidersSoloutionPk/license.key");
-                      if (!f.exists()) f = new File(Environment.getExternalStorageDirectory(), "CamSwap/license.key");
-                      if (f.exists()) {{
-                          BufferedReader br = new BufferedReader(new FileReader(f));
-                          String l = br.readLine(); br.close();
-                          if (l != null && !l.trim().isEmpty()) return l.trim();
-                      }}
-                  }} catch (Exception ignored) {{}}
-                  if (ctx != null) return ctx.getSharedPreferences("pk_rider_lic", Context.MODE_PRIVATE).getString("k", "");
-                  return "";
-              }}
-              public static LicenseInfo checkSavedLicense(Context ctx) {{ return verifyLicense(ctx, readKey(ctx)); }}
-              public static boolean isSystemLicensed() {{ return checkSavedLicense(null).isValid; }}
-          }}'''
-          with open(os.path.join(target_dir, 'LicenseManager.java'), 'w') as f:
-              f.write(lic_manager)
-
-          act_activity = f'''package {pkg};
-          import android.app.Activity;
-          import android.content.*;
-          import android.graphics.Color;
-          import android.net.Uri;
-          import android.os.Bundle;
-          import android.view.Gravity;
-          import android.widget.*;
-          import java.net.URLEncoder;
-
-          public class ActivationActivity extends Activity {{
-              @Override
-              protected void onCreate(Bundle savedInstanceState) {{
-                  super.onCreate(savedInstanceState);
-                  ScrollView sv = new ScrollView(this);
-                  sv.setBackgroundColor(Color.parseColor("#121212"));
-                  LinearLayout root = new LinearLayout(this);
-                  root.setOrientation(LinearLayout.VERTICAL);
-                  root.setPadding(48, 60, 48, 80);
-                  root.setGravity(Gravity.CENTER_HORIZONTAL);
-
-                  ImageView logo = new ImageView(this);
-                  try {{
-                      int resId = getResources().getIdentifier("app_logo", "drawable", getPackageName());
-                      if (resId != 0) logo.setImageResource(resId);
-                  }} catch (Exception ignored) {{}}
-                  LinearLayout.LayoutParams lp = new LinearLayout.LayoutParams(220, 220);
-                  lp.bottomMargin = 24;
-                  logo.setLayoutParams(lp);
-                  root.addView(logo);
-
-                  TextView title = new TextView(this);
-                  title.setText("Riders Soloution Pk");
-                  title.setTextSize(24);
-                  title.setTextColor(Color.WHITE);
-                  title.setGravity(Gravity.CENTER);
-                  root.addView(title);
-
-                  TextView sub = new TextView(this);
-                  sub.setText("Official Activation & License Verification");
-                  sub.setTextColor(Color.GRAY);
-                  sub.setGravity(Gravity.CENTER);
-                  sub.setPadding(0, 4, 0, 30);
-                  root.addView(sub);
-
-                  final String hwid = LicenseManager.getDeviceHWID(this);
-                  TextView hwidLbl = new TextView(this);
-                  hwidLbl.setText("Your Device HWID:");
-                  hwidLbl.setTextColor(Color.parseColor("#AAAAAA"));
-                  root.addView(hwidLbl);
-
-                  TextView hwidVal = new TextView(this);
-                  hwidVal.setText(hwid);
-                  hwidVal.setTextSize(17);
-                  hwidVal.setTextColor(Color.parseColor("#00E676"));
-                  hwidVal.setPadding(0, 8, 0, 16);
-                  root.addView(hwidVal);
-
-                  Button copyBtn = new Button(this);
-                  copyBtn.setText("Copy Device HWID");
-                  copyBtn.setBackgroundColor(Color.parseColor("#1E88E5"));
-                  copyBtn.setTextColor(Color.WHITE);
-                  copyBtn.setOnClickListener(v -> {{
-                      ClipboardManager cm = (ClipboardManager) getSystemService(Context.CLIPBOARD_SERVICE);
-                      cm.setPrimaryClip(ClipData.newPlainText("HWID", hwid));
-                      Toast.makeText(this, "HWID copied to clipboard!", Toast.LENGTH_SHORT).show();
-                  }});
-                  root.addView(copyBtn);
-
-                  TextView contactLbl = new TextView(this);
-                  contactLbl.setText("To get an activation key, contact support via WhatsApp:");
-                  contactLbl.setTextColor(Color.parseColor("#AAAAAA"));
-                  contactLbl.setPadding(0, 28, 0, 10);
-                  root.addView(contactLbl);
-
-                  Button waBtn = new Button(this);
-                  waBtn.setText("💬 WhatsApp Support (+966547425565)");
-                  waBtn.setBackgroundColor(Color.parseColor("#25D366"));
-                  waBtn.setTextColor(Color.WHITE);
-                  waBtn.setOnClickListener(v -> {{
-                      try {{
-                          String msg = "Hello, I want to activate license for Riders Soloution Pk.\\nDevice HWID: " + hwid;
-                          String url = "https://api.whatsapp.com/send?phone=966547425565&text=" + URLEncoder.encode(msg, "UTF-8");
-                          startActivity(new Intent(Intent.ACTION_VIEW, Uri.parse(url)));
-                      }} catch (Exception e) {{
-                          Toast.makeText(this, "Cannot open WhatsApp", Toast.LENGTH_SHORT).show();
-                      }}
-                  }});
-                  root.addView(waBtn);
-
-                  TextView keyLbl = new TextView(this);
-                  keyLbl.setText("Enter License Key:");
-                  keyLbl.setTextColor(Color.parseColor("#AAAAAA"));
-                  keyLbl.setPadding(0, 28, 0, 10);
-                  root.addView(keyLbl);
-
-                  final EditText keyInput = new EditText(this);
-                  keyInput.setHint("Paste full key here...");
-                  keyInput.setHintTextColor(Color.GRAY);
-                  keyInput.setTextColor(Color.WHITE);
-                  keyInput.setBackgroundColor(Color.parseColor("#2C2C2C"));
-                  keyInput.setPadding(24, 24, 24, 24);
-                  root.addView(keyInput);
-
-                  Button actBtn = new Button(this);
-                  actBtn.setText("Activate License");
-                  actBtn.setBackgroundColor(Color.parseColor("#00C853"));
-                  actBtn.setTextColor(Color.WHITE);
-
-                  final TextView status = new TextView(this);
-                  status.setGravity(Gravity.CENTER);
-                  status.setPadding(0, 20, 0, 16);
-
-                  actBtn.setOnClickListener(v -> {{
-                      String val = keyInput.getText().toString().trim();
-                      LicenseManager.LicenseInfo info = LicenseManager.verifyAndSave(this, val);
-                      if (info.isValid) {{
-                          status.setTextColor(Color.parseColor("#00E676"));
-                          status.setText("Activated! Owner: " + info.owner + " | Tier: " + info.tier + " | Exp: " + info.expiresAt);
-                          Toast.makeText(this, "Activated successfully!", Toast.LENGTH_LONG).show();
-                          try {{
-                              startActivity(new Intent(this, Class.forName(getPackageName() + ".MainActivity")));
-                              finish();
-                          }} catch (Exception ignored) {{ finish(); }}
-                      }} else {{
-                          status.setTextColor(Color.parseColor("#FF5252"));
-                          status.setText("Activation failed: " + info.errorMessage);
-                      }}
-                  }});
-                  root.addView(actBtn);
-                  root.addView(status);
-
-                  if (LicenseManager.checkSavedLicense(this).isValid) {{
-                      status.setTextColor(Color.parseColor("#00E676"));
-                      status.setText("Application is already licensed and active.");
-                  }}
-
-                  sv.addView(root);
-                  setContentView(sv);
-              }}
-          }}'''
-          with open(os.path.join(target_dir, 'ActivationActivity.java'), 'w') as f:
-              f.write(act_activity)
-
-          main_kt = os.path.join(target_dir, 'MainActivity.kt')
-          if os.path.exists(main_kt):
-              with open(main_kt, 'r') as f: m_code = f.read()
-              if 'ActivationActivity' not in m_code:
-                  lock_k = """
-                  val licInfo = LicenseManager.checkSavedLicense(this)
-                  if (!licInfo.isValid) {
-                      val intent = android.content.Intent(this, ActivationActivity::class.java)
-                      startActivity(intent)
-                      finish()
-                      return
-                  }
-                  """
-                  m_code = m_code.replace('super.onCreate(savedInstanceState)', 'super.onCreate(savedInstanceState)\n' + lock_k)
-                  with open(main_kt, 'w') as f: f.write(m_code)
-
-          main_java = os.path.join(target_dir, 'MainActivity.java')
-          if os.path.exists(main_java):
-              with open(main_java, 'r') as f: mj_code = f.read()
-              if 'ActivationActivity' not in mj_code:
-                  lock_j = """
-                  LicenseManager.LicenseInfo licInfo = LicenseManager.checkSavedLicense(this);
-                  if (!licInfo.isValid) {
-                      android.content.Intent intent = new android.content.Intent(this, ActivationActivity.class);
-                      startActivity(intent);
-                      finish();
-                      return;
-                  }
-                  """
-                  mj_code = mj_code.replace('super.onCreate(savedInstanceState);', 'super.onCreate(savedInstanceState);\n' + lock_j)
-                  with open(main_java, 'w') as f: f.write(mj_code)
-
-          manifest_path = 'app/src/main/AndroidManifest.xml'
-          if os.path.exists(manifest_path):
-              with open(manifest_path, 'r') as f: m_cnt = f.read()
-              if 'ActivationActivity' not in m_cnt:
-                  act_decl = f'''
-                  <activity
-                      android:name="{pkg}.ActivationActivity"
-                      android:exported="true"
-                      android:label="Riders Soloution Pk" />
-                  '''
-                  m_cnt = m_cnt.replace('</application>', act_decl + '\n    </application>')
-                  with open(manifest_path, 'w') as f: f.write(m_cnt)
-
-          hook_path = os.path.join(target_dir, 'HookMain.java')
-          if os.path.exists(hook_path):
-              with open(hook_path, 'r') as f: h_cnt = f.read()
-              h_cnt = re.sub(r'MODULE_PACKAGE = "[^"]+"', 'MODULE_PACKAGE = "riders.soloution.pk"', h_cnt)
-              if 'isSystemLicensed' not in h_cnt:
-                  h_cnt = h_cnt.replace(
-                      'if (lpparam.packageName.equals(MODULE_PACKAGE)) {\n            return;\n        }',
-                      'if (lpparam.packageName.equals(MODULE_PACKAGE)) {\n            return;\n        }\n\n        if (!LicenseManager.isSystemLicensed()) {\n            return;\n        }'
-                  )
-              with open(hook_path, 'w') as f: f.write(h_cnt)
-          PYEOF
-          python3 -c "import textwrap; open('inject_ui.py', 'w').write(textwrap.dedent(open('inject_ui.py.raw').read()))"
-          python3 inject_ui.py
-
-      # 8. قواعد ProGuard وتجاهل تحذيرات Xposed
-      - name: Configure ProGuard Rules
-        run: |
-          mkdir -p app
-          cat << 'EOF' >> app/proguard-rules.pro
-          -dontwarn de.robv.android.xposed.**
-          -dontwarn io.github.zensu357.**
-          -dontwarn **
-          -keepclasseswithmembernames class * {
-              native <methods>;
-          }
-          -keep class io.github.zensu357.camswap.ActivationActivity { *; }
-          -keep class io.github.zensu357.camswap.LicenseManager { *; }
-          EOF
-
-      # 9. إعداد شهادة التوقيع الرسمية (بشكل نظيف وبدون تكرار الأسطر)
-      - name: Configure Automatic Release Signing in Gradle
-        run: |
-          mkdir -p app
-          keytool -genkeypair -v \
-            -keystore app/release.keystore \
-            -alias release_key \
-            -keyalg RSA \
-            -keysize 2048 \
-            -validity 10000 \
-            -storepass "pass123456" \
-            -keypass "pass123456" \
-            -dname "CN=RidersSoloutionPk, O=Dev, C=SA"
-
-          cat << 'PYEOF' > setup_signing.py.raw
-          with open('app/build.gradle', 'r') as f:
-              content = f.read()
-          signing_cfg = '''
-              signingConfigs {
-                  release {
-                      storeFile file('release.keystore')
-                      storePassword 'pass123456'
-                      keyAlias 'release_key'
-                      keyPassword 'pass123456'
-                  }
-              }
-          '''
-          if 'signingConfigs' not in content:
-              content = content.replace('release {', 'release {\n            signingConfig signingConfigs.release', 1)
-              content = content.replace('buildTypes {', signing_cfg + '\n    buildTypes {', 1)
-              with open('app/build.gradle', 'w') as f:
-                  f.write(content)
-          PYEOF
-          python3 -c "import textwrap; open('setup_signing.py', 'w').write(textwrap.dedent(open('setup_signing.py.raw').read()))"
-          python3 setup_signing.py
-
-      # 10. تجميع وبناء الـ APK للتطبيق الأساسي
-      - name: Build Protected Release APK
-        run: |
-          chmod +x gradlew
-          ./gradlew assembleRelease -x lint -x lintVitalRelease -x test --stacktrace --no-daemon 2>&1 | tee build_log.txt
-          EXIT_CODE=${PIPESTATUS[0]}
-          if [ $EXIT_CODE -ne 0 ]; then
-            echo "## ❌ تفاصيل خطأ التجميع:" >> $GITHUB_STEP_SUMMARY
-            echo '```text' >> $GITHUB_STEP_SUMMARY
-            grep -B 2 -A 35 "FAILURE: Build failed with an exception." build_log.txt >> $GITHUB_STEP_SUMMARY || tail -n 60 build_log.txt >> $GITHUB_STEP_SUMMARY
-            echo '```' >> $GITHUB_STEP_SUMMARY
-            exit $EXIT_CODE
-          fi
-
-      # 11. التأكد من وجود ملفات الـ APK
-      - name: Locate Output APK Files
-        run: |
-          echo "=== ملفات الـ APK الناتجة ==="
-          find app/build/outputs/ -name "*.apk"
-          ls -la keys_output/
-
-      # 12. رفع ملف الـ APK النهائي للتطبيق الأساسي
-      - name: Upload Final Protected APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: Riders-Soloution-Pk-Release-APK
-          path: app/build/outputs/apk/**/*.apk
-          if-no-files-found: error
-
-      # 13. رفع المفتاح الخاص للمطور
-      - name: Upload Developer Private Key
-        uses: actions/upload-artifact@v4
-        with:
-          name: Developer-Private-Key-DO-NOT-SHARE
-          path: keys_output/private_key.pem
+                      byte[] h =
